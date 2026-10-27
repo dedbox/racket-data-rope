@@ -1,6 +1,6 @@
 #lang info
 
-(define collection "data/rope")
+(define collection 'multi)
 (define version "1.0")
 (define pkg-authors '("Eric Griffis <dedbox@gmail.com>"))
 (define pkg-desc "A rope data structure.")
@@ -13,6 +13,3 @@
   '("racket-doc"
     "rackunit-lib"
     "scribble-lib"))
-
-(define scribblings
-  '(("scribblings/data-rope.scrbl" ())))

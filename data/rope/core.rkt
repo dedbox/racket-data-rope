@@ -371,7 +371,7 @@
            (define-values (l r) (node-children ρ))
            (define n (rope-length l))
            (cond [(<= j n) (slice l i j)]
-                 [(<= i n) (slice r (- i n) (- j n))]
+                 [(>= i n) (slice r (- i n) (- j n))]
                  [else (rope-join (slice l i n) (slice r 0 (- j n)))])])))
 
 ;; Replaces the elements in [i, j) with `ρ*`: split off the prefix and the to-be-dropped

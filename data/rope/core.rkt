@@ -212,7 +212,7 @@
   (define-values (ll lr) (node-children l))
   (cond [(<= (rope-height lr) (add1 (rope-height r)))
          (define ρ (make-node lr r))
-         (if (<= (rope-height r) (add1 (rope-height ll)))
+         (if (<= (rope-height ρ) (add1 (rope-height ll)))
              ;;    ·
              ;;   / \
              ;; ll   ρ

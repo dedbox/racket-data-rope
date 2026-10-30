@@ -28,8 +28,8 @@ title: rope system from scratch: consolidated design record
 **** 1.2 Architecture decisions in force
 | Area              | Decision                                                                                                                                                              | Status                        | ADR |
 |-------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------+-----|
-| signature         | The signature is a /chunk algebra/ (empty, length, ref, slice, append, width, limit; plus =chunk?= at the typing layer), not a 45-name interface                          | Proposed                      | 001 |
-| representation    | Two sealed, authentic structs serve every type; no type tag, per-node closure, or per-type struct                                                                     | Proposed (erasure is Given)   | 002 |
+| signature         | The signature is a /chunk algebra/ (empty, length, ref, slice, append, width, limit; plus =chunk?= at the typing layer), not a 45-name interface                          | Accepted (R4)               | 001 |
+| representation    | Two sealed, authentic structs serve every type; no type tag, per-node closure, or per-type struct                                                                     | Accepted (measured §3.2 rows 10-11) | 002 |
 | typing            | T2: static information on bindings, inference from operation signatures, =the= and =rope-cast= as escape hatches; no =local-expand= and no syntax-property protocol         | Accepted                      | 003 |
 | types             | Nominal types; the type name is an ordinary binding; =#:like= creates a newtype with a free =rope-cast=                                                                   | Proposed                      | 004 |
 | operations        | Dictionary-first: shared functions take dictionaries selected statically; =#:inline= and =#:specialize= are per-operation opt-ins generated from one body                 | Provisional (benchmark-gated) | 005 |
@@ -38,8 +38,8 @@ title: rope system from scratch: consolidated design record
 | classes           | Type classes: one kind of field (operation, required or defaulted), =#:extends= superclasses, static resolution, no import clauses, access to other classes through ops | Proposed                      | 008 |
 | tree              | Join-based balanced tree built from plain functions; bounded chunk size; no rebuilds                                                                                  | Proposed                      | 009 |
 | balance           | AVL (height-balanced), leaf-oriented is the shipped default; the join-based treap alternative was measured (§4) and dropped: one core ships (ADR-023, ADR-024)             | Accepted (measured)           | 016, 023, 024 |
-| node layout       | leaf =(len width chunk)=; node =(len width height left right)=; the measured treap variant swapped =height= for a boundary =priority= (§4; dropped, ADR-024)             | Provisional                   | 017, 023, 024 |
-| hashing, measures | No stored hash or extra measure; content equality and hashing are chunk-wise class operations; =equal?= on ropes is =eq?=                                                 | Conditional                   | 010 |
+| node layout       | leaf =(len width chunk)=; node =(len width height left right)=; the measured treap variant swapped =height= for a boundary =priority= (§4; dropped, ADR-024); no annotation fields (§3.1 Q4 rejected them)             | Provisional                   | 017, 023, 024 |
+| hashing, measures | No stored hash or extra measure; content equality and hashing are chunk-wise class operations; =equal?= on ropes is =eq?=                                                 | Accepted (Q13 no, R4)     | 010 |
 | slicing           | =(slice chunk start end)=, =(rope-slice r start end)=, =(rope-splice r start end insertion)= (replace =[start, end)=)                                                         | Accepted                      | 013 |
 | dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit                                                                                            | Provisional                   | 018 |
 | leaf merging      | =rope-concat= merges the two boundary leaves when their combined length is at most =merge-limit=                                                                          | Accepted (measured)           | 019 |
@@ -101,7 +101,10 @@ title: rope system from scratch: consolidated design record
 *** 2. Architecture decision records (chronological)
 **** R1: the from-scratch design
 ***** ADR-001 The signature is a chunk algebra
-- Status :: Proposed
+- Status :: Accepted (R4): confirmed by you. The delivered core realizes the algebra —
+  =chunk-sig= in =core.rkt=, one record per type in =sigs.rkt=, tree algorithms written once
+  over chunk operations; no primitive outside the algebra (§3.1 Q4) and the last caveat is
+  closed (§3.3 Q13).
 - Problem :: The current signature has 45 members realized per type, although all
   type-specific behavior concerns chunks (C1, C2).
 - Decision :: A type supplies only chunk operations (empty, length, ref, slice, append,
@@ -112,9 +115,12 @@ title: rope system from scratch: consolidated design record
   generated names become API.
 - Consequences :: Per-type cost is one record and one dictionary. Equality, hashing and
   ordering are classes, not type primitives.
-- Revisit when :: A new type needs a primitive that cannot be expressed as a chunk operation.
+- Revisit when :: A new type needs a primitive that cannot be expressed as a chunk operation. §3.1 Q4 closed the known candidate: per-node annotations are rejected, and the token ropes' span measure rides the =width= procedure, which the algebra already carries. Sign-off now needs only your confirmation: its last caveat, ADR-010, is closed by §3.3 Q13.
 ***** ADR-002 Uniform erased representation
-- Status :: Proposed; erasure itself is Given (P4)
+- Status :: Accepted (R4): erasure is Given (P4); the record is closed on your
+  confirmation now that both measured conditions hold — memory reaches 4.156 B/elem (string)
+  and 1.039 B/elem (bytes) (§3.2 row 10), and the matched-size baseline records the latency
+  win (§3.2 row 11, measured against the legacy external =dev= library).
 - Problem :: Per-type structs, per-node closures and type tags cost memory and cache lines
   on every node.
 - Decision :: One =leaf= struct and one =node= struct, sealed and authentic, shared by all
@@ -124,7 +130,8 @@ title: rope system from scratch: consolidated design record
   checked operations as the default (kept only as a debug build, ADR-011).
 - Consequences :: Type safety must come from compile time (ADR-003). =equal?= falls back to
   =eq?= and printing needs a custom writer.
-- Revisit when :: Measurements show the erased layout does not reduce memory or latency.
+- Revisit when :: Settled by §3.2 rows 10-11: the erased layout is measured to reduce
+  memory and latency. Reopen only if a measured pipeline workload shows the opposite.
 ***** ADR-003 Typing discipline T2
 - Status :: Accepted in R2
 - Problem :: Under erasure, a wrong dictionary or mixed types either corrupt data silently
@@ -210,7 +217,7 @@ title: rope system from scratch: consolidated design record
 - Consequences :: The balance scheme was chosen later (ADR-016, which supersedes the
   weight-balanced scheme named in R1).
 ***** ADR-010 No stored hash or measures; equality through classes
-- Status :: Conditional (R2)
+- Status :: Accepted (R4): the R2 condition is answered no by §3.3 Q13; hashing and content equality stay class operations outside the core.
 - Problem :: Eager polynomial hashing taxes every leaf creation and concatenation on the
   editing path. The current system needs it for content-based memoization in incremental
   lexing and parsing.
@@ -219,9 +226,12 @@ title: rope system from scratch: consolidated design record
 - Condition :: The new incremental pipeline (a text rope synchronized with a combined
   tokens-CST-AST rope) must not need content-based equality, hashing or extra per-node
   measures. A future line-aware rope is allowed, but must not destroy cache locality.
+  Answered by §3.3 Q13 (R4): the condition holds by design — the packrat-style
+  memoization-heavy approach (real-time synchronization of text, token and cst ropes plus a
+  derived AST) is abandoned, and the new architecture avoids that cooperation deliberately.
 - Rejected :: Keeping the eager hash (cost on the hot path); a generic =equal?= (needs a
   type tag, violating erasure).
-- Revisit when :: The pipeline design needs O(1) content equality, or a measure slot.
+- Revisit when :: Closed by §3.3 Q13 and §3.1 Q4: no O(1) content equality or hashing in the core, no measure slot (token ropes use =width=, allowed here; service indexes live outside the rope). Hard trigger stands: if packrat-style memoization ever returns, the whole architecture — not just this ADR — is reconsidered.
 ***** ADR-011 Unsafe core and debug build
 - Status :: Proposed (M5, M6)
 - Decision :: The core compiles unsafe in production through a safe/unsafe shim; tests run
@@ -272,18 +282,17 @@ title: rope system from scratch: consolidated design record
   Reopen only if a measured pipeline workload wants the treap's cursor-typing p50 win
   (§4.3) and worst-case bounds stop being required.
 ***** ADR-017 Node layout
-- Status :: Provisional
+- Status :: Provisional (=width= kept per §3.1 Q1/Q4; layout finalizes when ADR-022 resolves)
 - Decision :: =leaf(len, width, chunk)=; =node(len, width, height, left, right)=. This
   supersedes the R1 sketch with a leaf count. =width= (the additive index measure used by
   token ropes) stays in the core for now.
 - Rejected :: A leaf-count field (not needed once balance is by height); per-node hashes
   and equal-functions (ADR-010).
-- Revisit when :: The pipeline does not need =width= (remove it), or measurements favor
-  another layout (ADR-022).
+- Revisit when :: Measurements favor another layout (ADR-022). The =width= question is answered by §3.1 Q4/Q1: the field stays, no annotation fields are added, and leaf-width recomputation is bounded by =limit= (token span sums, cheaper than §4.4's text scan).
 ***** ADR-018 The chunk dictionary
 - Status :: Provisional
 - Decision :: A sealed record with =empty=, =length=, =ref=, =slice=, =append=, =width=, =limit=,
-  =merge-limit=. =width= may be given as a constant per-element width. M0 passes dictionaries
+  =merge-limit=. =width= may be given as a constant per-element width, or — for token ropes, per §3.1 Q4 — as a procedure summing the tokens' relative spans over a chunk; token chunk-sigs require immutable token structs. M0 passes dictionaries
   explicitly.
 - Rejected :: Hiding the dictionary behind macros in M0 (the benchmark must measure
   dictionary mode directly).
@@ -300,8 +309,7 @@ title: rope system from scratch: consolidated design record
 - Rejected :: Never merging (fragmentation); always rebuilding (ADR-009); merging up to
   =limit=, which is the slowest shape on the edit path (typing 1251 ns p50 against 536 ns at
   512/64 on a 10 MB buffer, and the clean p99 2317 ns against 822 ns).
-- Revisit when :: A measured pipeline workload (tokens-CST-AST ropes of vector chunks, ADR-004
-  and 022) needs a different merge fraction; rerun =benchmarks/limit-sweep.rkt= and re-read the
+- Revisit when :: §3.1 Q4 commits token ropes of vector chunks: =vector-sig= is unmeasured today (=limit= 128, =merge-limit= defaulting to =limit=), so its limits must be measured before the pipeline rope ships. Add token-vector scenarios to =benchmarks/limit-sweep.rkt= once §3.1 Q3 sizes are set; rerun it and re-read the
   rankings, which sort by the p99 over samples that did not straddle a garbage collection.
 ***** ADR-020 Empty rope singleton
 - Status :: Proposed
@@ -402,7 +410,7 @@ sequences from =core-tests.rkt= over both impls, compares chunk-wise contents, a
 | correctness | differential suite and =wide-valid?= pass                | abort; binary stays the base; wide stays a §3.3 Q19 candidate |
 | read        | =randref= p50 at 100 M bytes@2048 ≤ 0.7 × binary (≤ ~97 ns against 138 ns), and p50 from 100 K to 1000 M grows ≤ 10%; cache misses ≤ half | the depth hypothesis (Q9) is rejected; keep binary |
 | edit        | typing and 4-for-4 clean p50 ≤ 1.1 × binary              | wide demoted to a read-only variant           |
-| memory      | wide overhead ≤ binary formula (0.048 B/elem, string@512)| layout revisited; drop =wid= if §3.1 Q1 drops =width= |
+| memory      | wide overhead ≤ binary formula (0.048 B/elem, string@512)| layout revisited; =wid= stays (Q1 answered: =width= kept) |
 
 ****** Outcome: the decision to record
 Phase 5 writes one of:
@@ -457,10 +465,10 @@ Phase 5 writes one of:
 **** 3.1 Needed to proceed
 | # | Question                                                                                                                                                  | Affects           |
 |---+-----------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------|
-| 1 | Keep =width= in the core? It costs one word per leaf and per node and one addition per join.                                                                | ADR-017           |
+| 1 | Answered (R4): keep — the token ropes' span measure (§3.1 Q4) requires it; cost is one word per leaf and per node plus one addition per join step, with leaf-width recomputation bounded by =limit=.                                                               | ADR-017           |
 | 2 | Answered: the current repository — new modules live next to =core.rkt= (=treap-core.rkt= was measured §4 and dropped ADR-024; =wide.rkt= follows the ADR-022 protocol).                                                       | M0 layout         |
 | 3 | What are the typical and largest documents of the new pipeline? This sets the benchmark sizes (my guess: 100 K to 10 M elements; 100 M as a stress case). | ADR-021           |
-| 4 | Do the combined tokens-CST-AST ropes use vectors of token structs with =width= from a procedure? Do they need per-node annotations (node kind, span)?       | ADR-010, 017, 022 |
+| 4 | Answered (R4): yes — token ropes are vector chunks of immutable token structs carrying their own relative spans, and =width= comes from a chunk procedure summing those spans. No per-node annotations: semantic editor services (rename-all-occurrences, describe top-level signatures, enclosing-decl at cursor) run on side indexes maintained outside the rope — occurrence lists and sorted decl-span arrays updated incrementally by re-lexing dirty regions, positions stored relative to stable anchors; annotations would worsen descent locality and repair measures on the edit path, so they are rejected.       | ADR-010, 017, 022 |
 | 5 | Answered by the ADR-022 protocol: run Phase 0 first; implement =wide.rkt= only if the depth gate fires.                                                                                   | ADR-022           |
 **** 3.2 To be settled by data
 |  # | Question                                                       | Gate                                                                       |  ADR |
@@ -475,7 +483,7 @@ Phase 5 writes one of:
 **** 3.3 Not yet decided or discussed
 |  # | Question                                                                                                                                                                                                    |  Affects |
 |----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------|
-| 13 | Is ADR-010's condition met: does the new pipeline need no content-based equality, hashing or extra measures? (Dropped on the assumption that it does not.)                                                  |      010 |
+| 13 | Answered (R4): no — equality and hashing are class operations outside the core, never core primitives. The legacy requirement came from packrat-style memoization-heavy lexer/parser versions that synchronized three ropes (text, token, cst) plus a derived AST in real time; the new architecture deliberately avoids that level of cooperation between distinct libraries, so the assumption holds by design. If it is ever violated, the entire architecture is reconsidered, not just this ADR.                                                  |      010 |
 | 14 | Do the class conventions decided for the existing implementation (explicit instance headers, operations generated from fields with =#:private= and =#:op=, =#:realize= patterns) carry over to ADR-008 unchanged? |      008 |
 | 15 | Can typed bindings act as sequence expanders, so that =(for ([c doc]) …)= is specialized?                                                                                                                     |      007 |
 | 16 | What is the exact inference grammar of T2 (which forms propagate types), and how are user macros that produce ropes handled?                                                                                |      003 |

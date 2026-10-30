@@ -94,7 +94,9 @@ title: rope system from scratch: consolidated design record
   on recorded traces.
 - Benchmarks report p50, p99, p99.9 and max, with and without samples that overlapped a
   garbage collection, and compare against the current library. Gates are set after a
-  baseline run: no regression in the median, improvement in the p99.
+  baseline run: no regression in the median, improvement in the p99. The baseline run is
+  done (§3.2 rows 11-12), so the gates are now the pinned ceilings of §3.2 row 12, with
+  tolerance bands of ±10% on p50 and ±15% on clean p99.
 
 *** 2. Architecture decision records (chronological)
 **** R1: the from-scratch design
@@ -469,7 +471,7 @@ Phase 5 writes one of:
 |  9 | Is tree depth the limiting factor for random access? (§4.3 supports depth: the treap's sampled tree is 2× deeper — height 47 against AVL's 21 at 100 MB — and its cursor-ref p50 ratio grows with size.) | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
 | 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
 | 11 | Matched-size comparison done at 100 K string elements via =benchmarks/dev-sweep.sh= (dev extracted to /tmp, resolved with =racket -U -X overlay -S collects=; adapter shim presents the dev API under harness names). Dev runs its fixed 512/512 limit and balances on every edit path, so its config corresponds to the core's =merge-limit = limit= row. At the dev-equivalent core config (=string/512/512=): typing p50 944 ns / clean p99 1832 ns against dev 7800 / 11102 ns (8.2x / 6.1x); randref p50 67 ns / clean p99 173 ns against dev 85 / 270 ns (1.27x / 1.56x). Core's best rows are typing 971 / 1559 ns (=1024/1024=) and randref 36 / 92 ns (=4096/4096=) | p99.9 and max (no GC) for typing and edits                                 |  009 |
-| 12 | What absolute latency budgets do we adopt? The baseline run (row 11) satisfies the first gate: the core beats dev on median and clean p99 for both typing and random access at matched size. | after the baseline run (first gate: no median regression, better p99)      | §1.6 |
+| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
 **** 3.3 Not yet decided or discussed
 |  # | Question                                                                                                                                                                                                    |  Affects |
 |----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------|

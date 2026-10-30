@@ -1,5 +1,5 @@
 title: rope system from scratch: consolidated design record
-#+subtitle: scope = the independent, from-scratch design and its first milestone (M0). Rounds: R1 = from-scratch design, R2 = your answers, R3 = M0 build-out.
+#+subtitle: scope = the independent, from-scratch design and its first milestone (M0). Rounds: R1 = from-scratch design, R2 = your answers, R3 = M0 build-out, R4 = shipping decisions.
 
 *** Status legend
 | Tag         | Meaning                                                          |
@@ -37,8 +37,8 @@ title: rope system from scratch: consolidated design record
 | sequences         | One generic =in-rope= (and loop macros) with static inference, not a per-type alias                                                                                     | Proposed (spike at M3)        | 007 |
 | classes           | Type classes: one kind of field (operation, required or defaulted), =#:extends= superclasses, static resolution, no import clauses, access to other classes through ops | Proposed                      | 008 |
 | tree              | Join-based balanced tree built from plain functions; bounded chunk size; no rebuilds                                                                                  | Proposed                      | 009 |
-| balance           | AVL (height-balanced), leaf-oriented stays the shipped default; the join-based treap alternative was measured against it (§4, ADR-023)                                 | Accepted (measured)           | 016, 023 |
-| node layout       | leaf =(len width chunk)=; node =(len width height left right)=; the treap variant swaps =height= for a boundary =priority= (§4)                                         | Provisional                   | 017, 023 |
+| balance           | AVL (height-balanced), leaf-oriented is the shipped default; the join-based treap alternative was measured (§4) and dropped: one core ships (ADR-023, ADR-024)             | Accepted (measured)           | 016, 023, 024 |
+| node layout       | leaf =(len width chunk)=; node =(len width height left right)=; the measured treap variant swapped =height= for a boundary =priority= (§4; dropped, ADR-024)             | Provisional                   | 017, 023, 024 |
 | hashing, measures | No stored hash or extra measure; content equality and hashing are chunk-wise class operations; =equal?= on ropes is =eq?=                                                 | Conditional                   | 010 |
 | slicing           | =(slice chunk start end)=, =(rope-slice r start end)=, =(rope-splice r start end insertion)= (replace =[start, end)=)                                                         | Accepted                      | 013 |
 | dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit                                                                                            | Provisional                   | 018 |
@@ -51,8 +51,8 @@ title: rope system from scratch: consolidated design record
 1. Chunks live only in leaves. A leaf is non-empty and holds at most =limit= elements; the
    only empty leaf is =empty-rope=.
 2. Every node's cached =len=, =width= and =height= equal the values derived from its children.
-3. Sibling heights differ by at most one. (=treap-core.rkt=, §4 and ADR-023: replaces this
-   invariant with heap order — a node's priority is ≥ its children's — and keeps the other four.)
+3. Sibling heights differ by at most one. (The treap variant measured in §4 swapped this
+   invariant for heap order — a node's priority ≥ its children's — before ADR-024 dropped it.)
 4. Ropes are persistent: no operation mutates an existing rope. Operations that copy chunk
    data copy at most =limit= elements per touched leaf.
 ***** Semantics
@@ -70,7 +70,7 @@ title: rope system from scratch: consolidated design record
 **** 1.4 Performance obligations
 | Obligation                                                                                                | Where it is enforced                                  |
 |-----------------------------------------------------------------------------------------------------------+-------------------------------------------------------|
-| worst-case O(log n) time and allocation for index, split, concat, slice and splice; no rebalancing pauses | ADR-009, ADR-016; random-operation tests. The treap alternative (§4) is expected-O(log n) only, which is why it is not the default (ADR-023) |
+| worst-case O(log n) time and allocation for index, split, concat, slice and splice; no rebalancing pauses | ADR-009, ADR-016; random-operation tests. The treap alternative (§4) ships nothing, so this obligation applies to AVL alone (ADR-024) |
 | no hashing or measure maintenance on the edit path                                                        | ADR-010                                               |
 | iteration and cursors allocate nothing per element                                                        | ADR-007, ADR-009                                      |
 | the dictionary indirection costs at most 10% on random access, else the leaf case is inlined              | ADR-005; M0 =ref= benchmark                             |
@@ -79,7 +79,7 @@ title: rope system from scratch: consolidated design record
 **** 1.5 Milestones
 | Milestone | Contents                                                                                          | Status                      |
 |-----------+---------------------------------------------------------------------------------------------------+-----------------------------|
-| M0        | erased core, explicit dictionaries, property tests, benchmark harness against the current library | code delivered; sweep run; tree-family comparison §4 settled |
+| M0        | erased core, explicit dictionaries, property tests, benchmark harness against the current library | code delivered; sweep run; tree-family comparison §4 settled; treap dropped (ADR-024) |
 | M0b       | wide-node tree behind the same API; comparison with M0                                            | protocol Proposed (ADR-022)           |
 | M1        | =define-rope-type=, standard-op table, explicit type arguments, string and bytes types              | planned                     |
 | M2        | typing layer (T2)                                                                                 | planned                     |
@@ -263,10 +263,12 @@ title: rope system from scratch: consolidated design record
   applies unchanged. This mapping is my derivation.
 - Rejected :: Weight-balanced trees (superseded: less certain about the rotation rule);
   Boehm-style depth thresholds (ADR-009); the randomized treap as the default (§4:
-  1.2-2.2 × edit cost, sampled trees up to 2 × deeper, no worst-case bound).
+  1.2-2.2 × edit cost, sampled trees up to 2 × deeper, no worst-case bound) — and the
+  treap core itself, kept briefly by ADR-023, is dropped outright (ADR-024).
 - Revisit when :: Settled by §4: the invariant tests pass and the measured comparison
-  (ADR-023) keeps AVL. Reopen only if a measured pipeline workload wants the treap's
-  cursor-typing p50 win (§4.3) and worst-case bounds stop being required.
+  (ADR-023) keeps AVL; the treap core was dropped and its branch archived (ADR-024).
+  Reopen only if a measured pipeline workload wants the treap's cursor-typing p50 win
+  (§4.3) and worst-case bounds stop being required.
 ***** ADR-017 Node layout
 - Status :: Provisional
 - Decision :: =leaf(len, width, chunk)=; =node(len, width, height, left, right)=. This
@@ -411,11 +413,12 @@ Phase 5 writes one of:
   wide becomes the base for the line-aware pipeline only, binary for standalone ropes.
 
 ***** ADR-023 The treap alternative measured against AVL; AVL stays the default
-- Status :: Accepted (measured §4; numbers reproduce on re-run)
+- Status :: Accepted (measured §4, numbers reproduce on re-run; the shipped-alternative
+  outcome stated below is superseded by ADR-024)
 - Problem :: AVL repairs one level per join step with two height comparisons plus a
   rotation branch; a treap repairs with one priority comparison and stores a boundary
   =priority= instead of =height=. Treap cost is expected O(log n), not worst-case.
-- Decision :: Deliver a second, self-contained core beside =core.rkt=:
+- Decision :: Measure the join-based treap as a self-contained core beside =core.rkt=:
   =data/rope/treap-core.rkt= (branch =treap=), same API, same chunk algebra, same =leaf=
   struct and =empty-rope= singleton; priorities drawn from =random= (31-bit range,
   reproducible under =random-seed=). Unit and differential suites pass (§4.1). AVL remains
@@ -424,19 +427,36 @@ Phase 5 writes one of:
 - Rejected :: Adopting the treap as the default (§4.3); a private xorshift generator
   (15 ns/draw vs 77 ns/draw for =random=, but no external seeding and the draw sits inside
   a node allocation, §4.2).
-- Consequences :: =treap-core.rkt= stays in the package, unexported through
-  =data/rope.rkt=: a call site swaps one =require= to use it. Its API promises expected
-  bounds, so §1.4's worst-case obligation stays attached to AVL. Randomized tests lean on
-  =random-seed= for reproducibility.
+- Consequences :: Superseded by ADR-024: the measured core ships nothing. Its API promised
+  expected bounds, so §1.4's worst-case obligation applies to AVL alone; the randomized
+  treap tests leaned on =random-seed= for reproducibility.
 - Revisit when :: a measured pipeline workload favors the cursor-typing win (0.94 / 0.78 ×
   at 24 MB / 100 MB) and worst-case bounds stop being required; rerun §4's files then.
+
+**** R4: shipping decisions
+***** ADR-024 One core ships: treap-core dropped, branch =treap= retired and archived
+- Status :: Accepted (R4)
+- Problem :: ADR-023 left =treap-core.rkt= in the package, unexported, as a swap-in core.
+  Two cores behind one API invite the wrong mental model (P2, P3); §4.3 already regulates
+  AVL, and no shipped path wants the treap's win.
+- Decision :: Ship =core.rkt= alone. =treap-core.rkt= is dropped; branch =treap= is retired
+  without merging and kept in git history as the historical record — its code, tests and
+  benchmarks (commit =eb67a8d=, §4). There is no =require= swap for a treap rope: reaching
+  the treap family means re-measuring from §4 and the archived code.
+- Rejected :: Shipping treap-core alongside the AVL core (confusing UX, dual maintenance of
+  one API); deleting the branch (the historical record would vanish); merging =treap= into
+  =core= and reverting afterwards (history carries the files anyway, reverting adds noise).
+- Consequences :: §1.4's worst-case obligation applies to AVL alone; §4 stands as measured
+  evidence, re-runnable only from the archived branch (=PLTCOLLECTS= overlay, §4 intro).
+- Revisit when :: the ADR-016 condition unchanged: a measured pipeline workload wants the
+  cursor-typing win (§4.3) and worst-case bounds stop being required.
 
 *** 3. Open questions
 **** 3.1 Needed to proceed
 | # | Question                                                                                                                                                  | Affects           |
 |---+-----------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------|
 | 1 | Keep =width= in the core? It costs one word per leaf and per node and one addition per join.                                                                | ADR-017           |
-| 2 | Answered: the current repository — new cores live next to =core.rkt= (=treap-core.rkt= delivered §4; =wide.rkt= follows the ADR-022 protocol).                                                              | M0 layout         |
+| 2 | Answered: the current repository — new modules live next to =core.rkt= (=treap-core.rkt= was measured §4 and dropped ADR-024; =wide.rkt= follows the ADR-022 protocol).                                                       | M0 layout         |
 | 3 | What are the typical and largest documents of the new pipeline? This sets the benchmark sizes (my guess: 100 K to 10 M elements; 100 M as a stress case). | ADR-021           |
 | 4 | Do the combined tokens-CST-AST ropes use vectors of token structs with =width= from a procedure? Do they need per-node annotations (node kind, span)?       | ADR-010, 017, 022 |
 | 5 | Answered by the ADR-022 protocol: run Phase 0 first; implement =wide.rkt= only if the depth gate fires.                                                                                   | ADR-022           |
@@ -444,7 +464,7 @@ Phase 5 writes one of:
 |  # | Question                                                       | Gate                                                                       |  ADR |
 |----+----------------------------------------------------------------+----------------------------------------------------------------------------+------|
 |  6 | Is dictionary mode acceptable on =rope-ref= and similar paths?   | within 10% of inline on random access; else inline the leaf case           |  005 |
-|  7 | Settled: yes — the AVL join keeps every invariant on a leaf-oriented tree, and the treap's heap order holds after every random operation. | 140 tests pass over the three suites (§4.1): =tests/core-tests.rkt=, =tests/treap-core-tests.rkt=, =tests/core--treap-core-tests.rkt= |  016 |
+|  7 | Settled: yes — the AVL join keeps every invariant on a leaf-oriented tree; the treap variant held heap order too before ADR-024 dropped it. | =raco test tests/core-tests.rkt= ships on =core=; the 140-test §4.1 run happened once, its treap suites live on the archived branch |  016, 024 |
 |  8 | Settled: =merge-limit = limit/8 on =string-sig= (64/512), limit/4 on =bytes-sig= (512/2048). | typing p50 536 ns and clean p99 822 ns on a 10 MB buffer, against 1251/2317 ns at =merge-limit = limit; the read path pays about 10% more than the best configuration (random access 203 ns against 165 ns at limit 1024) |  019 |
 |  9 | Is tree depth the limiting factor for random access? (§4.3 supports depth: the treap's sampled tree is 2× deeper — height 47 against AVL's 21 at 100 MB — and its cursor-ref p50 ratio grows with size.) | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
 | 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
@@ -464,12 +484,13 @@ Phase 5 writes one of:
 
 *** 4. Tree-family comparison: =core.rkt= (AVL) against =treap-core.rkt= (join-based treaps)
 Verified on branch =treap= (commit =eb67a8d=, branched from =f722005=; its =sigs.rkt= predates
-the ADR-019 tuning, =core.rkt= is identical with the =core= branch). The branch headers record
-the measured numbers; re-running on this machine reproduces them, ratios moving a few percent
-between runs and orders. Branch code comments cite an earlier draft's section numbering
-(§5, §5.2, §5.3): §4 replaces it. To run the branch in a worktree, prepend that checkout to
-=PLTCOLLECTS= — the installed =data-rope= package link resolves =data/rope/*= against the
-=core= checkout otherwise.
+the ADR-019 tuning, =core.rkt= is identical with the =core= branch), then retired without
+merging: kept in git history as the historical record, shipping nothing (§4.5, ADR-024).
+The branch headers record the measured numbers; re-running on this machine reproduces them,
+ratios moving a few percent between runs and orders. Branch code comments cite an earlier
+draft's section numbering (§5, §5.2, §5.3): §4 replaces it. To re-run the archived branch in a
+worktree, prepend that checkout to =PLTCOLLECTS= — the installed =data-rope= package link
+resolves =data/rope/*= against the =core= checkout otherwise.
 
 **** 4.1 What the branch delivers, and the verification run
 | File | Contents |
@@ -540,9 +561,12 @@ property.
   O(height) descent on cached widths plus one chunk scan. The measure is cached in nodes, not
   recomputed on descent (§1.4 measure row).
 
-**** 4.5 Decision (ADR-023)
-AVL stays the shipped default (§1.2 balance row, ADR-016 status). =treap-core.rkt= stays in
-the package as the join-based implementation a call site swaps by =require=, unexported from
-=data/rope.rkt=; the differential suite is what makes the swap safe. Reopen the choice only if
-a measured pipeline workload wants the cursor-typing win and worst-case bounds stop being
-required.
+**** 4.5 Outcome (ADR-023 measured; ADR-024 dropped)
+The comparison stands as evidence: AVL is the shipped default (§1.2 balance row, ADR-016).
+=treap-core.rkt= ships nothing — ADR-024 drops it, and branch =treap= is retired without
+merging, kept in git history as the historical record of this section: its code, tests and
+benchmarks (commit =eb67a8d=). Re-running §4 needs a checkout of the archived branch (a
+worktree plus the =PLTCOLLECTS= overlay above), not a future package file. Reopen the choice
+only if a measured pipeline workload wants the cursor-typing win (§4.3: 0.94 / 0.78 × at
+24 / 100 MB) and worst-case bounds stop being required; then §4 and the archived code are
+the starting point.

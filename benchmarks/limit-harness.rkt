@@ -133,13 +133,13 @@
 ;; One scenario's measurement, all latencies in nanoseconds (flonums), counts exact:
 ;;   latency-n            operations sampled
 ;;   latency-mean/p50/p99/p999/max per-operation percentiles over every sample
-;;   latency-p50ng/p99ng/maxng    percentiles over only the samples that did not straddle a GC
+;;   latency-p50ng/p99ng/p999ng/maxng    percentiles over only the samples that did not straddle a GC
 ;;   latency-gc-ops     samples that straddled a collection
 ;;   latency-gc-time-ms collector time observed while sampling
 ;;   latency-copy-mean  average bytes allocated per operation
 ;;   latency-copy-max   largest allocation delta observed
 ;;   latency-copy-total total bytes allocated while sampling
-(struct latency (n mean p50 p99 p999 max p50ng p99ng maxng gc-ops gc-time-ms
+(struct latency (n mean p50 p99 p999 max p50ng p99ng p999ng maxng gc-ops gc-time-ms
                  copy-mean copy-max copy-total)
   #:transparent)
 
@@ -168,6 +168,7 @@
                     (percentile sorted 1.0)
                     (percentile clean-sorted .5)
                     (percentile clean-sorted .99)
+                    (percentile clean-sorted .999)
                     (percentile clean-sorted 1.0)
                     (- n (length clean))
                     (- (gc-ms) g0)
@@ -199,7 +200,7 @@
                [mean-ns (/ (* total-ms 1000000.0) n)]
                [copy-b (- (mem-b) b0)])
           (latency n mean-ns mean-ns mean-ns mean-ns mean-ns
-                   mean-ns mean-ns mean-ns
+                   mean-ns mean-ns mean-ns mean-ns
                    0 (- (gc-ms) g0) (/ copy-b n) (/ copy-b n) copy-b))
         (loop (add1 i) (op σ ρ i)))))
 
@@ -228,6 +229,7 @@
                    (percentile sorted 1.0)
                    (percentile clean-sorted .5)
                    (percentile clean-sorted .99)
+                   (percentile clean-sorted .999)
                    (percentile clean-sorted 1.0)
                    (- reps clean-n)
                    (- (gc-ms) g0)

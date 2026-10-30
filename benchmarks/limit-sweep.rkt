@@ -48,9 +48,12 @@
   (define pos (min (+ (quotient len 2) i) (sub1 len)))
   (rope-splice σ ρ pos pos (chunk->rope σ (chunk-of σ "a"))))
 
-;; A 4-for-4 patch: replace four characters at a pseudo-random position.
+;; A 4-for-4 patch: replace four characters at a pseudo-random position. The pseudo-offset can
+;; land within the rope's last three elements, where pos+4 would pass the end, so the offset is
+;; clamped to the last complete 4-element window.
 (define (op-edit4-4 σ ρ i)
-  (define pos (pseudo-offset i (rope-length ρ)))
+  (define len (rope-length ρ))
+  (define pos (min (pseudo-offset i len) (max 0 (- len 4))))
   (rope-splice σ ρ pos (+ pos 4) (chunk->rope σ (chunk-of σ "abcd"))))
 
 (define (op-delete1 σ ρ i)
@@ -109,17 +112,19 @@
 ;; meant to read magnitudes and long when it is meant to produce a decision. Window sizes are
 ;; chosen so a window lasts several timer ticks: 32 elements at ~1 µs each is ~32 µs, far above
 ;; the 0.25 µs resolution, so a window's mean-per-operation is meaningful.
+;; Windowed scenarios run 1024 windows: `percentile` clamps its index to n-1, so a p99.9 below
+;; max only exists once n > 1000. At 20 windows p99, p99.9, and max were all the same sample.
 (define scenario-list
   (list (scenario 'load    "load buffer (chunk->rope)"
                   (λ (σ ρ i) (buffer-load σ (rope-length ρ))) 'batch 1 0)
         (scenario 'loadp   "load file in pieces"
                   (λ (σ ρ i) (let-values ([(r _) (load-doc σ (rope-length ρ))]) r)) 'batch 1 0)
-        (scenario 'type    "typing: insert 1 char"         op-type        'window 20 32)
-        (scenario 'edit    "patches: 4-for-4"             op-edit4-4     'window 20 32)
-        (scenario 'delete  "backspace: delete 1 char"     op-delete1     'window 20 32)
-        (scenario 'indent  "paste: 30-char block"         op-indent      'window 16 32)
-        (scenario 'slice   "lexer: token slices"          op-token-slice 'window 30 32)
-        (scenario 'randref "random element access"        op-random-ref  'window 30 64)
+        (scenario 'type    "typing: insert 1 char"         op-type        'window 1024 32)
+        (scenario 'edit    "patches: 4-for-4"             op-edit4-4     'window 1024 32)
+        (scenario 'delete  "backspace: delete 1 char"     op-delete1     'window 1024 32)
+        (scenario 'indent  "paste: 30-char block"         op-indent      'window 1024 32)
+        (scenario 'slice   "lexer: token slices"          op-token-slice 'window 1024 32)
+        (scenario 'randref "random element access"        op-random-ref  'window 1024 64)
         (scenario 'scan    "lexer: chunk scan of 50 KB"   op-lex-scan    'batch  12 0)
         (scenario 'seqref  "sequential element access"    op-seq-ref     'batch  20 0)
         (scenario 'flat    "flatten whole buffer"         op-flatten     'batch  3 0)))
@@ -129,7 +134,7 @@
 ;; ---------------------------------------------------------------------------------------
 
 ;; A measured run: the configuration, the scenario, the latency struct, and the tree shape.
-(struct row (elem limit merge size id label n mean p50 p99 p999 max p50ng p99ng maxng gc-ops
+(struct row (elem limit merge size id label n mean p50 p99 p999 max p50ng p99ng p999ng maxng gc-ops
              copy-mean copy-total leaves height rss-kb) #:transparent)
 
 ;; Runs every scenario for one (elem, limit, merge-limit) configuration at one document size.
@@ -154,7 +159,7 @@
     (row elem limit merge size (scenario-id s) (scenario-label s)
          (latency-n l)
          (latency-mean l) (latency-p50 l) (latency-p99 l) (latency-p999 l) (latency-max l)
-         (latency-p50ng l) (latency-p99ng l) (latency-maxng l)
+         (latency-p50ng l) (latency-p99ng l) (latency-p999ng l) (latency-maxng l)
          (latency-gc-ops l) (latency-copy-mean l) (latency-copy-total l)
          leaves height rss)))
 
@@ -179,17 +184,17 @@
 (define (row->tsv r)
   ;; Latencies are rounded to nanoseconds; copy bytes are exact totals. `maxlat` is the row's
   ;; largest sample, so the name does not shadow the `max` procedure used below.
-  (define-values (elem limit merge size id label n mean p50 p99 p999 maxlat p50ng p99ng maxng
+  (define-values (elem limit merge size id label n mean p50 p99 p999 maxlat p50ng p99ng p999ng maxng
                   gc-ops copy-mean copy-total leaves height rss)
     (values (row-elem r) (row-limit r) (row-merge r) (row-size r) (row-id r) (row-label r)
             (row-n r) (round (row-mean r)) (round (row-p50 r)) (round (row-p99 r))
             (round (row-p999 r)) (round (row-max r)) (round (row-p50ng r)) (round (row-p99ng r))
-            (round (row-maxng r)) (row-gc-ops r) (round (row-copy-mean r))
+            (round (row-p999ng r)) (round (row-maxng r)) (row-gc-ops r) (round (row-copy-mean r))
             (row-copy-total r) (row-leaves r) (row-height r) (row-rss-kb r)))
   ;; Analytic retained size: chunk payload plus the tree over it.
-  (format "~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a"
+  (format "~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a\t~a"
           elem limit merge size id label n mean p50 p99 p999 maxlat
-          p50ng p99ng maxng gc-ops copy-mean copy-total leaves height rss
+          p50ng p99ng p999ng maxng gc-ops copy-mean copy-total leaves height rss
           (+ (* leaves 32) (* (max 0 (- leaves 1)) 48))
           (retained-per-elem elem size leaves)))
 
@@ -269,8 +274,8 @@
   ;; The header names the columns, so the output is self-describing when piped somewhere.
   (displayln (string-join
              (list "elem" "limit" "merge-limit" "size" "id" "label" "ops" "mean-ns" "p50-ns"
-                   "p99-ns" "p99.9-ns" "max-ns" "p50-no-gc" "p99-no-gc" "max-no-gc" "gc-windows"
-                   "copy-mean-b" "copy-total-b" "leaves" "height" "rss-kb" "tree-b" "bytes/elem")
+                   "p99-ns" "p99.9-ns" "max-ns" "p50-no-gc" "p99-no-gc" "p99.9-no-gc" "max-no-gc"
+                   "gc-windows" "copy-mean-b" "copy-total-b" "leaves" "height" "rss-kb" "tree-b" "bytes/elem")
              "\t"))
   (for ([r (in-list rows)]) (displayln (row->tsv r)))
   (for ([id (remove-duplicates (map row-id rows))])

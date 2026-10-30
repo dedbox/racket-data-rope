@@ -158,3 +158,17 @@ relevant to notes.org §3.3 Q18 (string chunks vs UTF-8 byte chunks).
 - `[` brackets for Racket idiom (this model's output is quantized; nested blocks need brackets).
 - `(require (prefix-in x/ …))` rather than `(require (prefix …))`.
 - Temp files go in `/tmp/opencode/`; nothing outside the project directory is writable (`/` is not).
+
+## 11. Running the oracle (dev branch) under the harness
+
+- Extract each run: `git -C ../racket-rope archive dev | tar -x -C /tmp/opencode/rope-dev`.
+- Resolve with CLI flags, not `PLTCOLLECTS` (env entries supply no source candidates):
+  `racket -U -X /tmp/opencode/rope-olay -S /usr/share/racket/collects …`. `-U` drops the user
+  links file (`~/.local/share/racket/9.3/links.rktd` maps `rope` -> the oracle checkout);
+  `-X` replaces the main collects dir with the overlay; `-S` appends the builtin collects.
+- Overlay root `/tmp/opencode/rope-olay/rope/` symlinks dev-tree entries; where dev has both a
+  dir and a `.rkt` (e.g. `class`/`class.rkt`) both must exist, or nested `rope/class/*` fails.
+- Require the generic core as `rope/rope`, not a bare `rope` copy: dev's `type.rkt` subclasses the
+  struct types from the `rope/rope` module instance, so a second copy creates unrelated struct
+  types and generic predicates (`rope-node?`, `rope-chunks`) reject typed nodes.
+- `raco make` has no path flags, so the sweep runs uncompiled from source.

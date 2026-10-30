@@ -43,7 +43,7 @@ title: rope system from scratch: consolidated design record
 | slicing           | =(slice chunk start end)=, =(rope-slice r start end)=, =(rope-splice r start end insertion)= (replace =[start, end)=)                                                         | Accepted                      | 013 |
 | dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit                                                                                            | Provisional                   | 018 |
 | leaf merging      | =rope-concat= merges the two boundary leaves when their combined length is at most =merge-limit=                                                                          | Accepted (measured)           | 019 |
-| empty rope        | One =empty-rope= singleton; no operation builds an empty leaf                                                                                                           | Proposed                      | 020 |
+| empty rope        | One =empty-rope= singleton; no operation builds an empty leaf; emptiness stays canonical — type distinctions never leak into the core runtime                                             | Accepted (R4)               | 020 |
 | safety            | Unsafe core behind a safe/unsafe shim; a debug build adds type tags and assertions                                                                                    | Proposed (M5, M6)             | 011 |
 | process           | Build M0 and measure before adding macros, typing or classes                                                                                                          | Accepted                      | 015 |
 **** 1.3 Invariants
@@ -312,9 +312,19 @@ title: rope system from scratch: consolidated design record
 - Revisit when :: §3.1 Q4 commits token ropes of vector chunks: =vector-sig= is unmeasured today (=limit= 128, =merge-limit= defaulting to =limit=), so its limits must be measured before the pipeline rope ships. Add token-vector scenarios to =benchmarks/limit-sweep.rkt= once §3.1 Q3 sizes are set; rerun it and re-read the
   rankings, which sort by the p99 over samples that did not straddle a garbage collection.
 ***** ADR-020 Empty rope singleton
-- Status :: Proposed
+- Status :: Accepted (R4): confirmed by you on a uniqueness principle — the empty rope
+  is unique up to unique isomorphism; distinctions live at the type level and must not
+  leak into the core runtime. The delivered singleton (=core.rkt:70=) is its canonical
+  representative.
 - Decision :: One =empty-rope= (a leaf with a =#f= chunk) for all types. Every operation
   returns it instead of building an empty leaf; join and split never see empty operands.
+- Rejected :: Per-type empty leaves — runtime evidence of type carried by emptiness
+  (violates uniqueness, erasure per ADR-002, and invariant 1).
+- Consequences :: Emptiness is =eq?-identical across types; the singleton's nominal type
+  comes from static context or the operation signature at the typing layer (M2, ADR-003),
+  never from the value (invariant 5).
+- Revisit when :: Nothing short of a redesign: any per-type runtime empty representation
+  would break the uniqueness principle.
 ***** ADR-021 M0 scope and benchmark harness
 - Status :: Provisional
 - Decision :: M0 has no macros, typing, classes, cursors or hashing. The harness measures:

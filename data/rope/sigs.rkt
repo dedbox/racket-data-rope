@@ -47,23 +47,42 @@
 ;;   vector-sig   chunks are vectors  -- elements are any value
 ;;
 ;; `width` is 1 everywhere: each element occupies exactly one index, so width == length.
-;; `merge-limit` is left unspecified, so it defaults to `limit` (see make-chunk-sig in
-;; core.rkt: boundary leaves are merged on concat when their combined length is <= limit).
 ;;
-;; The limits are first-pass guesses chosen for two reasons:
-;;   * small enough that a leaf copy stays within a few cache lines,
-;;   * large enough that a 100 MB document is a shallow tree rather than 200k leaves.
-;; They are tunables, not invariants -- the benchmark plan (notes.org §5–§6) decides them,
-;; especially merge-limit, which trades "one bounded copy per append" against
-;; "more, smaller leaves". Changing any of them changes only the constants below.
+;; The limits and merge-limits are measured, not guessed -- benchmarks/limit-sweep.rkt, which
+;; runs the editor pipeline (load, typing, 4-for-4 patches, deletion, paste, lexer slices and
+;; chunk scans, random and sequential access, flatten) over 1 MB, 10 MB, and 100 MB buffers and
+;; reports percentiles with samples that straddled a garbage collection counted separately.
+;; The chosen values for string-sig and bytes-sig are the configuration whose clean tail -- the
+;; p99 over samples that did not overlap a collection -- is the smallest on the edit path while
+;; the read path stays within a few percent of its best. They are tunables, not invariants, and
+;; `merge-limit` must stay <= `limit`: a merged boundary leaf is bounded by `merge-limit`, and a
+;; leaf is bounded by `limit`.
+;;
+;; The two knobs carry different costs, so they are chosen independently:
+;;   * `limit` sets the copy bound an edit pays when it splits a leaf, and the depth of the tree
+;;     a lookup walks. Editing gets cheaper as `limit` shrinks; access gets cheaper as it grows.
+;;   * `merge-limit` sets whether two boundary leaves merge on concat. Merging less pays fewer
+;;     and smaller copies per edit and keeps the tail low; merging more pays one bounded copy
+;;     and keeps the tree compact. Typing and patching want a small merge-limit; reads do not
+;;     care, because a chunk stays bounded by `limit` either way.
+;;
+;; Measured on a 10 MB buffer (nanoseconds, p50 / clean p99): string-sig typing is 536/822 at
+;; 512/64 against 1251/2317 at 512/512 -- merging less is the biggest latency win in this file.
+;; Its read path then costs about 10% more than the best configuration: random access 203 ns
+;; against 165 ns at 1024/128. bytes-sig at 2048/512 types at 363/596, patches at 1080/1258,
+;; deletes at 806/954, pastes at 910/1042 -- all better than the same shapes with
+;; merge-limit == limit (681/893 typing, 1305/8670 patches). Byte chunks copy cheaper than
+;; string chunks, so bytes-sig's best `limit` is larger than string-sig's.
+;; Retained size is payload-dominated: a rope costs about 1.04 bytes per element as bytes and
+;; about 4.16 as string characters, of which the tree adds less than 0.2 bytes per element.
 
 (define string-sig (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append
-                                   #:width 1 #:limit 512))
+                                   #:width 1 #:limit 512 #:merge-limit 64))
 
 (define bytes-sig (make-chunk-sig #:empty #"" #:length bytes-length #:ref bytes-ref
                                   #:slice subbytes #:append bytes-append
-                                  #:width 1 #:limit 1024))
+                                  #:width 1 #:limit 2048 #:merge-limit 512))
 
 (define vector-sig (make-chunk-sig #:empty (vector) #:length vector-length #:ref vector-ref
                                    #:slice vector-copy #:append vector-append

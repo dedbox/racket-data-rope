@@ -56,7 +56,10 @@
     (list->vector (build-list n elem-at)))
 
   (define sigs (list string-sig bytes-sig vector-sig))
-  (define limits (list 512 1024 128))
+  (define limits (list 512 2048 128))
+  ;; The merge-limits the module declares. They are what merging tests read: a merge is allowed
+  ;; when the two boundary chunks together weigh at most `merge-limit`.
+  (define merge-limits (list 64 512 128))
 
   ;; The source chunk for n elements, per sig.
   (define (src σ n)
@@ -136,15 +139,31 @@
   (define suite-algebra
     (test-suite "chunk algebra"
       (test-case "limits and merge-limits are the declared values"
+        ;; The values benchmarks/limit-sweep.rkt measured for the editor pipeline. They are
+        ;; tunables, so this test pins them: changing a constant in sigs.rkt must change here.
         (check-equal? (chunk-sig-limit string-sig) 512)
-        (check-equal? (chunk-sig-merge-limit string-sig) 512)
-        (check-equal? (chunk-sig-limit bytes-sig) 1024)
-        (check-equal? (chunk-sig-merge-limit bytes-sig) 1024)
+        (check-equal? (chunk-sig-merge-limit string-sig) 64)
+        (check-equal? (chunk-sig-limit bytes-sig) 2048)
+        (check-equal? (chunk-sig-merge-limit bytes-sig) 512)
         (check-equal? (chunk-sig-limit vector-sig) 128)
         (check-equal? (chunk-sig-merge-limit vector-sig) 128))
-      (test-case "merge-limit defaults to limit, which is how the sigs are written"
-        (for ([σ (in-list sigs)])
-          (check-equal? (chunk-sig-merge-limit σ) (chunk-sig-limit σ))))
+      (test-case "a merge-limit is never larger than its limit, which bounds leaves"
+        ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so the
+        ;; leaf invariant `rope-valid?` checks holds only while merge-limit <= limit. Only
+        ;; vector-sig declares the two as equal; the measured sigs merge less than they split.
+        (for ([σ (in-list sigs)] [limit (in-list limits)] [merge-limit (in-list merge-limits)])
+          (check-equal? (chunk-sig-merge-limit σ) merge-limit)
+          (check-true (<= (chunk-sig-merge-limit σ) (chunk-sig-limit σ))
+                      "merge-limit within limit"))
+        (check-equal? (chunk-sig-merge-limit string-sig)
+                    (/ (chunk-sig-limit string-sig) 8))
+        (check-equal? (chunk-sig-merge-limit bytes-sig)
+                    (/ (chunk-sig-limit bytes-sig) 4)))
+      (test-case "merge-limit defaults to limit when it is not declared"
+        ;; make-chunk-sig fills the field from `limit`, which is how vector-sig is written.
+        (define cs (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+                                   #:slice substring #:append string-append #:limit 7))
+        (check-equal? (chunk-sig-merge-limit cs) 7))
       (test-case "width is a procedure that equals the element count"
         ;; All three sigs declare #:width 1, so width == length on every chunk.
         (for ([σ (in-list sigs)] [c (in-list (list (src string-sig 7)
@@ -244,7 +263,7 @@
         (define b (byt 300))
         (check-eq? (leaf-chunk (bytes->rope b)) b))
       (test-case "limit + 1 splits into two leaves and copies the chunk"
-        (for ([σ (in-list sigs)] [n (in-list '(513 1025 129))] [limit (in-list limits)])
+        (for ([σ (in-list sigs)] [n (in-list '(513 2049 129))] [limit (in-list limits)])
           (define s (src σ n))
           (define ρ (build σ n))
           (check-true (node? ρ))
@@ -270,9 +289,9 @@
         (check-equal? (rope-leaf-count s2000) 4)
         (check-equal? (rope-height s2000) 2)
         (define b3000 (bytes->rope (byt 3000)))
-        (check-equal? (chunk-sizes bytes-sig b3000) (list 1024 1024 952))
-        (check-equal? (rope-leaf-count b3000) 3)
-        (check-equal? (rope-height b3000) 2)
+        (check-equal? (chunk-sizes bytes-sig b3000) (list 2048 952))
+        (check-equal? (rope-leaf-count b3000) 2)
+        (check-equal? (rope-height b3000) 1)
         (define v300 (chunk->rope vector-sig (vect 300)))
         (check-equal? (chunk-sizes vector-sig v300) (list 128 128 44))
         (check-equal? (rope-leaf-count v300) 3)
@@ -348,9 +367,11 @@
         (check-exn #rx"string-copy!" (λ () (rope->string (bytes->rope (byt 10)))))
         (check-exn #rx"bytes-copy!" (λ () (rope->bytes (string->rope (str 10))))))
       (test-case "flattening a rope whose boundary chunks merged into one leaf"
-        (define ρ (rope-concat string-sig (string->rope (str 200)) (string->rope (str 200))))
-        (check-equal? (chunk-sizes string-sig ρ) (list 400))
-        (check-equal? (rope->string ρ) (append* string-sig (str 200) (str 200))))))
+        ;; Two chunks that together sit exactly at string-sig's merge-limit (64) merge into one,
+        ;; so the flattened rope is a single leaf.
+        (define ρ (rope-concat string-sig (string->rope (str 32)) (string->rope (str 32))))
+        (check-equal? (chunk-sizes string-sig ρ) (list 64))
+        (check-equal? (rope->string ρ) (append* string-sig (str 32) (str 32))))))
 
   ;; =====================================================================
   ;; Rope operations driven by the sigs
@@ -358,10 +379,12 @@
   (define suite-operations
     (test-suite "operations through the sigs"
       (test-case "concat merges boundary chunks when they fit merge-limit"
-        (for ([σ (in-list sigs)] [limit (in-list limits)])
-          (define half (src σ (/ limit 2)))
-          (define ρ (rope-concat σ (build σ (/ limit 2)) (build σ (/ limit 2))))
-          (check-equal? (chunk-sizes σ ρ) (list limit))
+        (for ([σ (in-list sigs)] [merge-limit (in-list merge-limits)])
+          ;; Two halves that together sit exactly at merge-limit merge into a single leaf, and
+          ;; that leaf is still within `limit`.
+          (define half (src σ (/ merge-limit 2)))
+          (define ρ (rope-concat σ (build σ (/ merge-limit 2)) (build σ (/ merge-limit 2))))
+          (check-equal? (chunk-sizes σ ρ) (list merge-limit))
           (check-true (rope-valid? σ ρ))
           ;; the merged chunk is the two halves concatenated, so content matches at chunk
           ;; level, not against a fresh source

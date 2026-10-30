@@ -82,3 +82,9 @@ The top-level project directory is `racket-data-rope`, a multi-lib Racket packag
 
 * You are running on a tightly quantized local model. To prevent losing track of nested
   grammar blocks, you MUST use square brackets `[]` where expected by Racket idiom.
+
+## Git commit messages
+
+* Subject: first line only, under 68 characters — imperative, lowercase.
+* Details belong in the body: blank line, then the third line onward. Body lines
+  have no length limit; wrap at a readable width (~72) only for legibility.

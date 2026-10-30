@@ -96,7 +96,9 @@ title: rope system from scratch: consolidated design record
   garbage collection, and compare against the current library. Gates are set after a
   baseline run: no regression in the median, improvement in the p99. The baseline run is
   done (§3.2 rows 11-12), so the gates are now the pinned ceilings of §3.2 row 12, with
-  tolerance bands of ±10% on p50 and ±15% on clean p99.
+  tolerance bands of ±10% on p50 and ±15% on clean p99. Window scenarios now sample 1024
+  windows (R4): below ~1000 samples the percentile index clamps to the last sample, so
+  p99.9 is genuine only at the strengthened sampling — it collapsed into max at 20 windows.
 
 *** 2. Architecture decision records (chronological)
 **** R1: the from-scratch design
@@ -206,7 +208,10 @@ title: rope system from scratch: consolidated design record
   trait-composition operators; global instance registries.
 - Revisit when :: A class needs another class's fields rather than its operations.
 ***** ADR-009 Join-based balanced trees from plain functions
-- Status :: Proposed
+- Status :: Accepted (measured R4): the spine-descent join delivers the worst-case bounds
+  it promises — edit tails at 100 K scale with the =limit= copy bound, not with rebalancing
+  pauses (§3.2 row 11), invariant tests pass (row 7), and the matched-size dev comparison
+  favors it (row 11).
 - Problem :: Latency needs worst-case bounds, not amortized rebuilds (P1, C2).
 - Decision :: Concatenation, splitting and slicing are built on one =join= (Blelloch,
   Ferizovic and Sun, 2016), with worst-case O(log n) cost and no rebuilds. Leaves are
@@ -216,6 +221,9 @@ title: rope system from scratch: consolidated design record
   tail latency; per-type tree code.
 - Consequences :: The balance scheme was chosen later (ADR-016, which supersedes the
   weight-balanced scheme named in R1).
+- Revisit when :: A measured workload shows an unbounded tail on the edit path, or the
+  ADR-022 experiment replaces the repair rules — its Phase 3 fallback stays bounded, so
+  the rejection of subtree rebuilds stands either way.
 ***** ADR-010 No stored hash or measures; equality through classes
 - Status :: Accepted (R4): the R2 condition is answered no by §3.3 Q13; hashing and content equality stay class operations outside the core.
 - Problem :: Eager polynomial hashing taxes every leaf creation and concatenation on the
@@ -333,6 +341,9 @@ title: rope system from scratch: consolidated design record
   inlined, and with an unsafe accessor; iteration; construction; retained memory.
   Per-operation samples carry a garbage-collection flag so tails are attributed correctly.
   The old and new libraries run the same scenarios.
+  Sizes re-based by §3.1 Q3 (R4): pipeline documents run ~1–10 kilochars typical, 20–50
+  kilochars large, rarely a few hundred kilochars at most — the ladder becomes 1 K / 10 K /
+  50 K / 100–500 K; the earlier 100 K–10 M runs stand as historical stress baselines.
 - Rejected :: Whole-operation timing only (hides tails); comparing only against new
   variants (no baseline).
 ***** ADR-022 Wide-node tree experiment (M0b)
@@ -477,7 +488,7 @@ Phase 5 writes one of:
 |---+-----------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------|
 | 1 | Answered (R4): keep — the token ropes' span measure (§3.1 Q4) requires it; cost is one word per leaf and per node plus one addition per join step, with leaf-width recomputation bounded by =limit=.                                                               | ADR-017           |
 | 2 | Answered: the current repository — new modules live next to =core.rkt= (=treap-core.rkt= was measured §4 and dropped ADR-024; =wide.rkt= follows the ADR-022 protocol).                                                       | M0 layout         |
-| 3 | What are the typical and largest documents of the new pipeline? This sets the benchmark sizes (my guess: 100 K to 10 M elements; 100 M as a stress case). | ADR-021           |
+| 3 | Answered (R4): typical documents are 100–1000 LOC (~1–10 kilochars); occasionally 2000–5000 LOC (~20–50 kilochars); C++/JS/TS targets can run larger but rarely beyond a few hundred kilochars. Primary targets Racket > OCaml > Hazel sit at the low end. Lexical tokens are ~5–10 characters, not ~20, so typical token ropes hold ~100–1500 tokens. Benchmark ladder re-based: 1 K / 10 K typical, 20–50 K large, 100–500 K stress. | ADR-021           |
 | 4 | Answered (R4): yes — token ropes are vector chunks of immutable token structs carrying their own relative spans, and =width= comes from a chunk procedure summing those spans. No per-node annotations: semantic editor services (rename-all-occurrences, describe top-level signatures, enclosing-decl at cursor) run on side indexes maintained outside the rope — occurrence lists and sorted decl-span arrays updated incrementally by re-lexing dirty regions, positions stored relative to stable anchors; annotations would worsen descent locality and repair measures on the edit path, so they are rejected.       | ADR-010, 017, 022 |
 | 5 | Answered by the ADR-022 protocol: run Phase 0 first; implement =wide.rkt= only if the depth gate fires.                                                                                   | ADR-022           |
 **** 3.2 To be settled by data
@@ -488,8 +499,8 @@ Phase 5 writes one of:
 |  8 | Settled: =merge-limit = limit/8 on =string-sig= (64/512), limit/4 on =bytes-sig= (512/2048). | typing p50 536 ns and clean p99 822 ns on a 10 MB buffer, against 1251/2317 ns at =merge-limit = limit; the read path pays about 10% more than the best configuration (random access 203 ns against 165 ns at limit 1024) |  019 |
 |  9 | Is tree depth the limiting factor for random access? (§4.3 supports depth: the treap's sampled tree is 2× deeper — height 47 against AVL's 21 at 100 MB — and its cursor-ref p50 ratio grows with size.) | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
 | 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
-| 11 | Matched-size comparison done at 100 K string elements via =benchmarks/dev-sweep.sh= (dev extracted to /tmp, resolved with =racket -U -X overlay -S collects=; adapter shim presents the dev API under harness names). Dev runs its fixed 512/512 limit and balances on every edit path, so its config corresponds to the core's =merge-limit = limit= row. At the dev-equivalent core config (=string/512/512=): typing p50 944 ns / clean p99 1832 ns against dev 7800 / 11102 ns (8.2x / 6.1x); randref p50 67 ns / clean p99 173 ns against dev 85 / 270 ns (1.27x / 1.56x). Core's best rows are typing 971 / 1559 ns (=1024/1024=) and randref 36 / 92 ns (=4096/4096=) | p99.9 and max (no GC) for typing and edits                                 |  009 |
-| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
+| 11 | Matched-size comparison done at 100 K string elements via =benchmarks/dev-sweep.sh= (dev extracted to /tmp, resolved with =racket -U -X overlay -S collects=; adapter shim presents the dev API under harness names). Dev runs its fixed 512/512 limit and balances on every edit path, so its config corresponds to the core's =merge-limit = limit= row. At the dev-equivalent core config (=string/512/512=): typing p50 944 ns / clean p99 1832 ns against dev 7800 / 11102 ns (8.2x / 6.1x); randref p50 67 ns / clean p99 173 ns against dev 85 / 270 ns (1.27x / 1.56x). Core's best rows are typing 971 / 1559 ns (=1024/1024=) and randref 36 / 92 ns (=4096/4096=) | Met (R4): genuine clean p99.9 at 1024 windows/scenario, two runs. typing clean p99.9 2.4–6.0 µs / max 7.2–9.5 µs (512/512); 3.2–3.5 / 3.3–4.6 µs (1024/1024); 4.9–5.8 / 5.7–11.1 µs (4096/4096). edit clean p99.9 3.4–3.8 µs / max 4.5–4.7 µs (512/512); 4.0–4.6 µs (1024/1024); 9.1–10.9 / 11.1–12.0 µs (4096/4096). Tails scale with the =limit= copy bound per invariant 4 — no rebalancing pauses; ≤8/1024 windows straddled a collection. Caveats: at n=1024 the p99.9 index sits on the 3rd-largest window, so clean p99.9/max vary ~2–2.5× run-to-run; mutating scenarios grow the rope past nominal size across 1024 windows |  009 |
+| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes; note the pins predate the R4 sampling change (20 -> 1024 windows/scenario) — under the strengthened harness mutating scenarios grow the rope past nominal size and p50s read higher, so re-pin under the current harness before gating M1/M3 | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
 **** 3.3 Not yet decided or discussed
 |  # | Question                                                                                                                                                                                                    |  Affects |
 |----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------|

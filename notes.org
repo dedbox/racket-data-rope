@@ -1,0 +1,438 @@
+title: rope system from scratch: consolidated design record
+#+subtitle: scope = the independent, from-scratch design and its first milestone (M0). Rounds: R1 = from-scratch design, R2 = your answers, R3 = M0 build-out.
+
+*** Status legend
+| Tag         | Meaning                                                          |
+|-------------+------------------------------------------------------------------|
+| Given       | stated by you as a constraint or principle                       |
+| Accepted    | you confirmed it                                                 |
+| Conditional | you accepted it, subject to a condition that is not yet verified |
+| Provisional | adopted for M0; the final decision is gated on benchmark results |
+| Proposed    | recommended in the discussion; not yet reviewed by you           |
+
+*** 1. Active priorities, invariants, and decisions
+**** 1.1 Requirements and priorities (Given)
+| ID | Statement                                                                                                             |
+|----+-----------------------------------------------------------------------------------------------------------------------|
+| C1 | Every type is a rope type; every implementation follows one fixed signature; most code is identical per type.         |
+| C2 | Code shared by most or all types follows a generic pattern amenable to parameterization.                              |
+| C3 | A hierarchy of classes parameterized by rope type can be defined and instantiated.                                    |
+| C4 | Generic operations on rope types and classes can be inlined for maximum performance.                                  |
+| C5 | Rope types are static: all checks, inference and generation happen at compile time.                                   |
+| P1 | Latency minimization is crucial. *Runtime latency overrides everything*; compile time is secondary but kept reasonable. |
+| P2 | The user experience is smooth, intuitive and visibly designed for these traits.                                       |
+| P3 | Both user-generated code and the internal code base stay clean.                                                       |
+| P4 | Full runtime rope erasure is highly desirable.                                                                        |
+| P5 | Types are nominal (distinct names, distinct types); this may change given a compelling reason.                        |
+| P6 | Racket conventions are the default everywhere (for example, slicing is =(chunk start end)=).                            |
+**** 1.2 Architecture decisions in force
+| Area              | Decision                                                                                                                                                              | Status                        | ADR |
+|-------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------+-----|
+| signature         | The signature is a /chunk algebra/ (empty, length, ref, slice, append, width, limit; plus =chunk?= at the typing layer), not a 45-name interface                          | Proposed                      | 001 |
+| representation    | Two sealed, authentic structs serve every type; no type tag, per-node closure, or per-type struct                                                                     | Proposed (erasure is Given)   | 002 |
+| typing            | T2: static information on bindings, inference from operation signatures, =the= and =rope-cast= as escape hatches; no =local-expand= and no syntax-property protocol         | Accepted                      | 003 |
+| types             | Nominal types; the type name is an ordinary binding; =#:like= creates a newtype with a free =rope-cast=                                                                   | Proposed                      | 004 |
+| operations        | Dictionary-first: shared functions take dictionaries selected statically; =#:inline= and =#:specialize= are per-operation opt-ins generated from one body                 | Provisional (benchmark-gated) | 005 |
+| standard ops      | One table defines them; hot operations inline the leaf case and share the tree walk                                                                                   | Proposed                      | 006 |
+| sequences         | One generic =in-rope= (and loop macros) with static inference, not a per-type alias                                                                                     | Proposed (spike at M3)        | 007 |
+| classes           | Type classes: one kind of field (operation, required or defaulted), =#:extends= superclasses, static resolution, no import clauses, access to other classes through ops | Proposed                      | 008 |
+| tree              | Join-based balanced tree built from plain functions; bounded chunk size; no rebuilds                                                                                  | Proposed                      | 009 |
+| balance           | AVL (height-balanced), leaf-oriented                                                                                                                                  | Provisional (invariant tests) | 016 |
+| node layout       | leaf =(len width chunk)=; node =(len width height left right)=                                                                                                            | Provisional                   | 017 |
+| hashing, measures | No stored hash or extra measure; content equality and hashing are chunk-wise class operations; =equal?= on ropes is =eq?=                                                 | Conditional                   | 010 |
+| slicing           | =(slice chunk start end)=, =(rope-slice r start end)=, =(rope-splice r start end insertion)= (replace =[start, end)=)                                                         | Accepted                      | 013 |
+| dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit                                                                                            | Provisional                   | 018 |
+| leaf merging      | =rope-concat= merges the two boundary leaves when their combined length is at most =merge-limit=                                                                          | Accepted (measured)           | 019 |
+| empty rope        | One =empty-rope= singleton; no operation builds an empty leaf                                                                                                           | Proposed                      | 020 |
+| safety            | Unsafe core behind a safe/unsafe shim; a debug build adds type tags and assertions                                                                                    | Proposed (M5, M6)             | 011 |
+| process           | Build M0 and measure before adding macros, typing or classes                                                                                                          | Accepted                      | 015 |
+**** 1.3 Invariants
+***** Data structure (checked by =rope-valid?=)
+1. Chunks live only in leaves. A leaf is non-empty and holds at most =limit= elements; the
+   only empty leaf is =empty-rope=.
+2. Every node's cached =len=, =width= and =height= equal the values derived from its children.
+3. Sibling heights differ by at most one.
+4. Ropes are persistent: no operation mutates an existing rope. Operations that copy chunk
+   data copy at most =limit= elements per touched leaf.
+***** Semantics
+5. A rope carries no runtime evidence of its type. Its dictionary is selected statically
+   and must match the rope; the typing layer guarantees this.
+6. Ropes of different types never combine: this is a compile-time error.
+7. Nominal identity is binding identity, not spelling.
+8. At most one instance of a class for a type is visible in a scope; the module system
+   enforces it (conflicting bindings).
+9. =equal?= on ropes is =eq?=; content comparison goes through an explicit class operation.
+10. All checking, inference and instance resolution happen at compile time.
+***** Code structure
+11. The core is plain Racket: no macros and no type information. The typing layer knows
+    nothing about trees. Macros live in three small, table-driven modules.
+**** 1.4 Performance obligations
+| Obligation                                                                                                | Where it is enforced                                  |
+|-----------------------------------------------------------------------------------------------------------+-------------------------------------------------------|
+| worst-case O(log n) time and allocation for index, split, concat, slice and splice; no rebalancing pauses | ADR-009, ADR-016; random-operation tests              |
+| no hashing or measure maintenance on the edit path                                                        | ADR-010                                               |
+| iteration and cursors allocate nothing per element                                                        | ADR-007, ADR-009                                      |
+| the dictionary indirection costs at most 10% on random access, else the leaf case is inlined              | ADR-005; M0 =ref= benchmark                             |
+| tails are attributed to algorithm or garbage collector separately                                         | ADR-021                                               |
+| compile time does not grow with (operations × types)                                                      | ADR-005 (nothing is instantiated per type by default) |
+**** 1.5 Milestones
+| Milestone | Contents                                                                                          | Status                      |
+|-----------+---------------------------------------------------------------------------------------------------+-----------------------------|
+| M0        | erased core, explicit dictionaries, property tests, benchmark harness against the current library | code delivered; sweep run           |
+| M0b       | wide-node tree behind the same API; comparison with M0                                            | protocol Proposed (ADR-022)           |
+| M1        | =define-rope-type=, standard-op table, explicit type arguments, string and bytes types              | planned                     |
+| M2        | typing layer (T2)                                                                                 | planned                     |
+| M3        | inline mode, =in-rope=, =define-rope-op #:inline=                                                     | planned                     |
+| M4        | classes and instances                                                                             | planned                     |
+| M5        | newtypes, debug build, documentation                                                              | planned                     |
+| M6        | unsafe core, =#:specialize=, garbage-collection measurements (leaf limits settled, ADR-019)         | planned                     |
+**** 1.6 Testing and measurement policy
+- Differential testing against the current (dev branch) implementation (oracle);
+  model-based property tests against Racket strings and vectors; the same suites in safe
+  and unsafe builds; a test for every compile-time error message; latency-regression tests
+  on recorded traces.
+- Benchmarks report p50, p99, p99.9 and max, with and without samples that overlapped a
+  garbage collection, and compare against the current library. Gates are set after a
+  baseline run: no regression in the median, improvement in the p99.
+
+*** 2. Architecture decision records (chronological)
+**** R1: the from-scratch design
+***** ADR-001 The signature is a chunk algebra
+- Status :: Proposed
+- Problem :: The current signature has 45 members realized per type, although all
+  type-specific behavior concerns chunks (C1, C2).
+- Decision :: A type supplies only chunk operations (empty, length, ref, slice, append,
+  width, limit; =chunk?= for casts). Everything else (tree algorithms, cursors, iteration,
+  standard operations) is written once as ordinary functions over those operations.
+- Rejected :: A larger fixed signature with per-type realization of every member (the
+  current design): code size and compile time grow with operations × types, and the
+  generated names become API.
+- Consequences :: Per-type cost is one record and one dictionary. Equality, hashing and
+  ordering are classes, not type primitives.
+- Revisit when :: A new type needs a primitive that cannot be expressed as a chunk operation.
+***** ADR-002 Uniform erased representation
+- Status :: Proposed; erasure itself is Given (P4)
+- Problem :: Per-type structs, per-node closures and type tags cost memory and cache lines
+  on every node.
+- Decision :: One =leaf= struct and one =node= struct, sealed and authentic, shared by all
+  types. Type-dependent behavior reaches the data only through statically selected
+  dictionaries.
+- Rejected :: A dictionary or tag stored in each rope (not erased); runtime tags with
+  checked operations as the default (kept only as a debug build, ADR-011).
+- Consequences :: Type safety must come from compile time (ADR-003). =equal?= falls back to
+  =eq?= and printing needs a custom writer.
+- Revisit when :: Measurements show the erased layout does not reduce memory or latency.
+***** ADR-003 Typing discipline T2
+- Status :: Accepted in R2
+- Problem :: Under erasure, a wrong dictionary or mixed types either corrupt data silently
+  or fail far from the cause (C5).
+- Decision :: Static information travels on bindings (=define-rope=, typed =let=, typed
+  function signatures). Types are inferred by a small visible grammar over unexpanded
+  syntax: an identifier with static info, =(the T e)=, or a rope operation applied per its
+  signature. Anything else uses =the=. =rope-cast= checks values from untyped code. Errors are
+  domain-level compile-time messages.
+- Rejected :: T0 (type argument at every call) and T1 (ambient default type): neither
+  protects the erased representation. T3 (embedding in Typed Racket): no type-class
+  resolution or per-type specialization, and it forces typed code on users; usable at the
+  edges only. =local-expand= or syntax properties as the inference mechanism: slow and
+  fragile.
+- Consequences :: The inference grammar must stay small; widen it by adding rows, not
+  expansion tricks.
+- Revisit when :: Real code shows the grammar rejecting common patterns.
+***** ADR-004 Nominal types as ordinary bindings
+- Status :: Proposed; nominal types are Given (P5)
+- Problem :: Types with identical representations may need different instances (for
+  example case-insensitive ordering).
+- Decision :: A type is a binding exported and renamed by the module system.
+  =(define-rope-type t #:like u)= makes a distinct nominal type with the same dictionary;
+  =rope-cast= between such types is free; casting between different representations is a
+  compile-time error.
+- Rejected :: Structural typing (cannot distinguish types that differ only by instance);
+  identity by spelling (needs a naming convention and breaks under renaming).
+- Revisit when :: A compelling reason to drop nominal typing appears.
+***** ADR-005 Dictionary-first operations with opt-in inlining
+- Status :: Provisional
+- Problem :: Per-type template instantiation of everything gives peak speed but inflates
+  code, compile time and internal macro complexity (C4).
+- Decision :: Every operation has one body and two compilations: a shared function taking
+  dictionaries (default) and an inlined macro specialized to one type (=#:inline=;
+  =#:specialize= lifts one copy per module later). One accessor macro, =τ.op=, makes the same
+  text compile in both modes. Hot operations inline the leaf case and share the tree walk.
+- Rejected :: Templates for all code (kept only as an opt-in); first-class modules or
+  units (runtime linking, no inlining).
+- Consequences :: A per-element dictionary call is the cost to measure. If an operation
+  fails its gate it becomes =#:inline= by changing one keyword.
+- Revisit when :: M0 shows dictionary access more than 10% slower on random access, or 25%
+  slower on both random and sequential access.
+***** ADR-006 Table-driven standard operations
+- Status :: Proposed
+- Problem :: The current system has hand-written wrapper operations (12 of 43 are thin wrappers).
+- Decision :: One table defines each standard operation: core function, signature,
+  dictionary use. Each row yields a macro that infers the type, checks arguments agree,
+  and expands to the core call.
+- Rejected :: Hand-written per-operation macros.
+***** ADR-007 Generic sequence macros
+- Status :: Proposed; spike at M3
+- Problem :: In the current system a per-type =in-*-rope= alias reached through a rename
+  transformer lost =for='s fast path (you could not find =:do-in= in the expansion).
+- Decision :: One generic =in-rope=, =rope-foldl=, =for/rope= defined with
+  =define-sequence-syntax=, with static inference of the type. Typed bindings may be made
+  sequence expanders if the protocol allows.
+- Rejected :: Per-type sequence aliases.
+- Revisit when :: The spike shows the sequence-syntax protocol cannot recognize typed bindings.
+***** ADR-008 Classes as typed records of operations
+- Status :: Proposed (carried over from conventions decided for the existing
+  implementation; not re-reviewed for the new system)
+- Problem :: The existing class design needed parameters, members, imports and ambient
+  names; ordinary languages have a single concept.
+- Decision :: A class is a record schema indexed by a rope type. It has one kind of field:
+  an operation, required or with a default (overridable), or provided. Signatures declare
+  arities and replace syntax classes. =#:extends= declares superclasses; an instance of a
+  subclass requires instances of its superclasses for the same type. Classes reach other
+  classes through their operations; there are no import clauses. The chunk algebra is a
+  root class that every class extends implicitly. Instances are module-level bindings
+  found by type binding and class; coherence comes from the module system.
+- Rejected :: Separate parameters and members with an import clause (the existing design);
+  trait-composition operators; global instance registries.
+- Revisit when :: A class needs another class's fields rather than its operations.
+***** ADR-009 Join-based balanced trees from plain functions
+- Status :: Proposed
+- Problem :: Latency needs worst-case bounds, not amortized rebuilds (P1, C2).
+- Decision :: Concatenation, splitting and slicing are built on one =join= (Blelloch,
+  Ferizovic and Sun, 2016), with worst-case O(log n) cost and no rebuilds. Leaves are
+  bounded by the type's chunk limit, so the largest copy per operation is bounded. Only
+  functions that look inside chunks take a dictionary.
+- Rejected :: Depth-triggered amortized rebalancing (Boehm, Atkinson and Plass, 1995):
+  tail latency; per-type tree code.
+- Consequences :: The balance scheme was chosen later (ADR-016, which supersedes the
+  weight-balanced scheme named in R1).
+***** ADR-010 No stored hash or measures; equality through classes
+- Status :: Conditional (R2)
+- Problem :: Eager polynomial hashing taxes every leaf creation and concatenation on the
+  editing path. The current system needs it for content-based memoization in incremental
+  lexing and parsing.
+- Decision :: Nodes store no hash and no measure beyond length and width. =rope-hash= and
+  =rope=?= are chunk-wise class operations (O(n)). =equal?= on ropes is =eq?=.
+- Condition :: The new incremental pipeline (a text rope synchronized with a combined
+  tokens-CST-AST rope) must not need content-based equality, hashing or extra per-node
+  measures. A future line-aware rope is allowed, but must not destroy cache locality.
+- Rejected :: Keeping the eager hash (cost on the hot path); a generic =equal?= (needs a
+  type tag, violating erasure).
+- Revisit when :: The pipeline design needs O(1) content equality, or a measure slot.
+***** ADR-011 Unsafe core and debug build
+- Status :: Proposed (M5, M6)
+- Decision :: The core compiles unsafe in production through a safe/unsafe shim; tests run
+  both builds. A debug build adds type tags to roots and asserts them in every operation,
+  as a safety net for =the= and casts.
+- Rejected :: Always-on tags (cost); unsafe without a safe twin (untestable).
+***** ADR-012 Milestones and testing
+- Status :: Proposed
+- Decision :: Build in the order of §1.5; the minimal useful system is M0 to M2. Test as
+  in §1.6, using the current implementation as the oracle.
+**** R2: your answers
+***** ADR-013 Racket slicing convention
+- Status :: Accepted
+- Problem :: The earlier sketch used =(chunk start count)=.
+- Decision :: =(slice chunk start end)=, and likewise =rope-slice=, =rope-splice=; Racket
+  conventions are the default throughout.
+- Rejected :: =(start count)=.
+***** ADR-014 Runtime latency over compile time
+- Status :: Accepted
+- Decision :: Runtime latency is the overriding priority; compile time is kept reasonable
+  where possible.
+- Consequences :: Per-type instantiation of library code stays opt-in; no compile-time
+  optimization at the expense of runtime.
+***** ADR-015 Build and measure before layering
+- Status :: Accepted
+- Problem :: The architecture is principled but unproven; runtime performance is the
+  primary concern.
+- Decision :: Implement the core first (M0), benchmark it against the current library, and
+  only then add macros, typing and classes.
+- Rejected :: Implementing the whole layered system before measuring.
+**** R3: M0
+***** ADR-016 AVL instead of weight-balanced
+- Status :: Provisional (invariant tests)
+- Problem :: R1 named weight-balanced join-based trees; the AVL variant has exact
+  published algorithms and cheap invariants.
+- Decision :: Leaf-oriented AVL: every node has a height; =join= descends the taller tree's
+  inner spine and repairs with at most one single or double rotation per level. A
+  leaf-oriented tree maps onto Blelloch et al.'s key-based trees (leaves play the role of
+  empty subtrees; joining without a key is joining with a dummy key), so the algorithm
+  applies unchanged. This mapping is my derivation.
+- Rejected :: Weight-balanced trees (superseded: less certain about the rotation rule);
+  Boehm-style depth thresholds (ADR-009).
+- Revisit when :: =tests/next-core-tests.rkt= fails the balance invariant; fall back to the
+  key-based formulation.
+***** ADR-017 Node layout
+- Status :: Provisional
+- Decision :: =leaf(len, width, chunk)=; =node(len, width, height, left, right)=. This
+  supersedes the R1 sketch with a leaf count. =width= (the additive index measure used by
+  token ropes) stays in the core for now.
+- Rejected :: A leaf-count field (not needed once balance is by height); per-node hashes
+  and equal-functions (ADR-010).
+- Revisit when :: The pipeline does not need =width= (remove it), or measurements favor
+  another layout (ADR-022).
+***** ADR-018 The chunk dictionary
+- Status :: Provisional
+- Decision :: A sealed record with =empty=, =length=, =ref=, =slice=, =append=, =width=, =limit=,
+  =merge-limit=. =width= may be given as a constant per-element width. M0 passes dictionaries
+  explicitly.
+- Rejected :: Hiding the dictionary behind macros in M0 (the benchmark must measure
+  dictionary mode directly).
+***** ADR-019 Boundary-leaf merge policy
+- Status :: Accepted (measured by =benchmarks/limit-sweep.rkt=)
+- Problem :: Splits and small appends fragment leaves.
+- Decision :: =rope-concat= merges the last leaf of the left rope with the first leaf of the
+  right rope when their combined length is at most =merge-limit=: replace the last leaf (one
+  path copy) and drop the first (a rebalancing join). The field is declared independently of
+  =limit=, and must stay <= =limit= so a merged leaf remains a leaf the invariant accepts.
+  The measured values declare =merge-limit = limit/8 for =string-sig= (64 of 512) and
+  =merge-limit = limit/4 for =bytes-sig= (512 of 2048); =vector-sig= leaves the default of
+  =limit=, since it is not measured.
+- Rejected :: Never merging (fragmentation); always rebuilding (ADR-009); merging up to
+  =limit=, which is the slowest shape on the edit path (typing 1251 ns p50 against 536 ns at
+  512/64 on a 10 MB buffer, and the clean p99 2317 ns against 822 ns).
+- Revisit when :: A measured pipeline workload (tokens-CST-AST ropes of vector chunks, ADR-004
+  and 022) needs a different merge fraction; rerun =benchmarks/limit-sweep.rkt= and re-read the
+  rankings, which sort by the p99 over samples that did not straddle a garbage collection.
+***** ADR-020 Empty rope singleton
+- Status :: Proposed
+- Decision :: One =empty-rope= (a leaf with a =#f= chunk) for all types. Every operation
+  returns it instead of building an empty leaf; join and split never see empty operands.
+***** ADR-021 M0 scope and benchmark harness
+- Status :: Provisional
+- Decision :: M0 has no macros, typing, classes, cursors or hashing. The harness measures:
+  single-character typing sessions; random 4-for-4 edits at 100 K to 10 M elements (100 M
+  optional); random and sequential access in dictionary mode, with the chunk accessor
+  inlined, and with an unsafe accessor; iteration; construction; retained memory.
+  Per-operation samples carry a garbage-collection flag so tails are attributed correctly.
+  The old and new libraries run the same scenarios.
+- Rejected :: Whole-operation timing only (hides tails); comparing only against new
+  variants (no baseline).
+***** ADR-022 Wide-node tree experiment (M0b)
+- Status :: Proposed experiment; the protocol below is Proposed; no decision yet
+- Problem :: A binary tree over 100 M elements is about 18 or more levels deep, and each
+  level is a likely cache miss. A wide-node tree (fan-out about 16, cumulative lengths in
+  an =fxvector=) is about 5 levels deep and suits a future line-aware rope.
+- Decision :: Keep M0's API implementation-agnostic so that =wide.rkt= can be tested and
+  benchmarked with the same files. The protocol resolves §3.1 Q2: the module lives at
+  =data/rope/wide.rkt=, next to the delivered =core.rkt=, in the current repository.
+- Rejected :: Threading type tags or dictionaries through wide nodes (violates erasure,
+  ADR-002); full-tree rebuild repairs (ADR-009).
+- Revisit when :: M0 shows random access much slower than sequential access, and growing
+  with size.
+
+****** Experiment protocol (Proposed)
+Runs the experiment to a decision; answers §3.1 Q5 by gating implementation on
+measurement rather than on hope. Budget: Phase 0 half a day (runs and report), Phase 1
+half a day, Phases 2 and 3 together one day, Phase 4 half a day, Phase 5 one notes.org
+edit; total ≤ 2 working days.
+
+| Phase | Work                                                    | Gate                                                          |
+|-------+---------------------------------------------------------+---------------------------------------------------------------|
+| 0     | Depth measurement, no new code: run =limit-sweep.rkt= at sizes 100 K, 1 M, 10 M, 100 M, 1000 M, scenarios =randref= and =seqref=, report p50 per size and levels touched | proceed to Phases 1-4 only if =randref= p50 grows ≥ 30% per size decade and sits ≥ 15% above =seqref=; else record a No in §3.2 row 9 and stop at Phase 5 |
+| 1     | Harness refactor: an implementation-agnostic runner (see Phase 1)   | =limit-sweep.rkt= reruns on =core-impl= and matches recorded numbers |
+| 2     | =data/rope/wide.rkt= behind the same functional API (see Phase 2)   | compiles standalone; plain Racket, no macros (invariant 11) |
+| 3     | =tests/wide-tests.rkt= (unit) and =tests/core--wide-tests.rkt= (see Phase 3) | random-operation replays pass both implementations; contents agree; =wide-valid?= after every operation |
+| 4     | =benchmarks/wide-sweep.rkt=: wide against core on the same scenarios; cache-miss counts from =perf stat= | acceptance table below |
+| 5     | Record the outcome                                       | rewrite ADR-022 status; update §1.2 tree rows, §1.5 M0b, §3.1 Q5, §3.2 row 9, §3.3 Q19 |
+
+Phase 0 and Phase 4 measure bytes chunks at ≥ 10 M sizes (string stress stays ≤ 10 MB chars,
+racket-facts §2). Compile sources and benchmark files before every run (the stale-.zo trap).
+
+****** Phase 1: implementation-agnostic harness
+Wrap the operation names one implementation exports in a single struct; samplers and the
+scenario list stay unchanged, threaded through =impl=. =wide.rkt= exports the same names,
+so =wide-impl= wraps identically.
+
+#+begin_src racket
+(struct rope-impl (empty chunk->rope concat split slice splice ref valid?
+                   leaf-count node-count height fold-chunks) #:transparent)
+(define core-impl (rope-impl empty-rope chunk->rope rope-concat rope-split rope-slice
+                             rope-splice rope-ref rope-valid? rope-leaf-count
+                             rope-node-count rope-height rope-fold-chunks))
+#+end_src
+
+****** Phase 2: the wide layout
+=leaf= stays the core struct (chunk ≤ =limit=, =empty-rope= singleton, ADR-019 merge policy
+and ADR-020 unchanged); a wide node replaces the binary node.
+
+| struct      | fields                                                                                              | cost |
+|-------------+-----------------------------------------------------------------------------------------------------+------|
+| =wide-node= | =length=, =width=, =height=, =kids= (immutable vector, fan 8..16), =offs= (=fxvector=, fan+1 cumulative lengths), =wid= (=fxvector=, fan+1 cumulative widths) | ≈ 480 B: 3-field struct ≈ 32 B, two 17-entry =fxvector= ≈ 152 B each, children vector ≈ 144 B |
+
+Invariants (extend §1.3): chunks only in leaves; children heights differ by ≤ 1 and
+=height= = 1 + the children's max; fan ∈ [8, 16]; =offs= and =wid= agree with the children's
+measures and node measures equal their sums; persistence holds (≤ 16 children and two
+bounded arrays copied per touched node, ≤ =limit= elements per touched leaf). Navigation
+descends by binary search over =offs=: ≤ 4 comparisons per level, on one contiguous array.
+
+| impl       | depth at 100 M              | depth at 1000 M | tree overhead at 100 M        |
+|------------+-----------------------------+-----------------+-------------------------------|
+| binary AVL | 18 string@512, 16 bytes@2048 | 21 string@512   | 195,312 × 48 B ≈ 9.4 MB       |
+| wide K=16  | 5 string@512, 4 bytes@2048   | 6               | ≈ 13,024 × 480 B ≈ 6.3 MB     |
+
+****** Phase 3: algorithms and tests
+=rope-join=, =rope-split=, =rope-slice=, =rope-concat= keep Blelloch's spine descent
+(ADR-009, ADR-016), generalized to wide nodes: descend the inner spine to a junction node,
+splice children arrays there, repair on the way back, with at most one repair per level:
+
+1. node split when fan > 16 (split the children array at a balanced half);
+2. node merge when fan < 8 (merge adjacent arrays when the total is ≤ 16, else split);
+3. pull the innermost children between siblings when heights differ by > 1 (wide rotation).
+
+Fallback flag: if the repair rules are ambiguous or blocked for > half a day, switch to a
+bounded spine rebuild (copy spine nodes only, each fan ≤ 16); the worst case stays bounded
+and no subtree rebuilds, so ADR-009's rejection stands. =tests/wide-tests.rkt= exercises
+each rule directly; =tests/core--wide-tests.rkt= replays the same deterministic random-operation
+sequences from =core-tests.rkt= over both impls, compares chunk-wise contents, and checks
+=wide-valid?= after every operation.
+
+****** Acceptance gates
+| Gate        | Pass                                                     | If failed                                     |
+|-------------+----------------------------------------------------------+-----------------------------------------------|
+| correctness | differential suite and =wide-valid?= pass                | abort; binary stays the base; wide stays a §3.3 Q19 candidate |
+| read        | =randref= p50 at 100 M bytes@2048 ≤ 0.7 × binary (≤ ~97 ns against 138 ns), and p50 from 100 K to 1000 M grows ≤ 10%; cache misses ≤ half | the depth hypothesis (Q9) is rejected; keep binary |
+| edit        | typing and 4-for-4 clean p50 ≤ 1.1 × binary              | wide demoted to a read-only variant           |
+| memory      | wide overhead ≤ binary formula (0.048 B/elem, string@512)| layout revisited; drop =wid= if §3.1 Q1 drops =width= |
+
+****** Outcome: the decision to record
+Phase 5 writes one of:
+- Adopted        :: wide becomes the base layout, replacing ADR-017 (update the tree and
+  node-layout rows in §1.2; M0b becomes settled; §3.3 Q19 answered: wide nodes serve a
+  line-aware rope by carrying cumulative line counts in =wid= instead of a per-leaf summary).
+- Rejected       :: the read or correctness gates fail: binary AVL stays the base;
+  §3.2 row 9 records the measured answer; Q19 stays open with the per-leaf-summary alternative.
+- Conditional    :: read wins but edit regulates (≤ 1.1 × tolerated and then exceeded):
+  wide becomes the base for the line-aware pipeline only, binary for standalone ropes.
+
+*** 3. Open questions
+**** 3.1 Needed to proceed
+| # | Question                                                                                                                                                  | Affects           |
+|---+-----------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------|
+| 1 | Keep =width= in the core? It costs one word per leaf and per node and one addition per join.                                                                | ADR-017           |
+| 2 | Where do the new modules live: =next/= in the current repository, or a separate repository?                                                                 | M0 layout         |
+| 3 | What are the typical and largest documents of the new pipeline? This sets the benchmark sizes (my guess: 100 K to 10 M elements; 100 M as a stress case). | ADR-021           |
+| 4 | Do the combined tokens-CST-AST ropes use vectors of token structs with =width= from a procedure? Do they need per-node annotations (node kind, span)?       | ADR-010, 017, 022 |
+| 5 | Answered by the ADR-022 protocol: run Phase 0 first; implement =wide.rkt= only if the depth gate fires.                                                                                   | ADR-022           |
+**** 3.2 To be settled by data
+|  # | Question                                                       | Gate                                                                       |  ADR |
+|----+----------------------------------------------------------------+----------------------------------------------------------------------------+------|
+|  6 | Is dictionary mode acceptable on =rope-ref= and similar paths?   | within 10% of inline on random access; else inline the leaf case           |  005 |
+|  7 | Does the AVL join keep every invariant on leaf-oriented trees? | =raco test tests/next-core-tests.rkt=                                        |  016 |
+|  8 | Settled: =merge-limit = limit/8 on =string-sig= (64/512), limit/4 on =bytes-sig= (512/2048). | typing p50 536 ns and clean p99 822 ns on a 10 MB buffer, against 1251/2317 ns at =merge-limit = limit; the read path pays about 10% more than the best configuration (random access 203 ns against 165 ns at limit 1024) |  019 |
+|  9 | Is tree depth the limiting factor for random access?           | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
+| 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
+| 11 | Not yet compared against the current core; the harness now reports the percentiles over samples that did not straddle a collection, so the algorithm's own tail is separable from the GC's. Typing clean p99 822 ns, edit 2504 ns, delete 1646 ns, paste 1596 ns on a 10 MB buffer | p99.9 and max (no GC) for typing and edits                                 |  009 |
+| 12 | What absolute latency budgets do we adopt?                     | after the baseline run (first gate: no median regression, better p99)      | §1.6 |
+**** 3.3 Not yet decided or discussed
+|  # | Question                                                                                                                                                                                                    |  Affects |
+|----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------|
+| 13 | Is ADR-010's condition met: does the new pipeline need no content-based equality, hashing or extra measures? (Dropped on the assumption that it does not.)                                                  |      010 |
+| 14 | Do the class conventions decided for the existing implementation (explicit instance headers, operations generated from fields with =#:private= and =#:op=, =#:realize= patterns) carry over to ADR-008 unchanged? |      008 |
+| 15 | Can typed bindings act as sequence expanders, so that =(for ([c doc]) …)= is specialized?                                                                                                                     |      007 |
+| 16 | What is the exact inference grammar of T2 (which forms propagate types), and how are user macros that produce ropes handled?                                                                                |      003 |
+| 17 | What replaces the current =rope-offset-index= (width-to-index search) and cursors in the new core? Both are deferred to M1.                                                                                   | 009, 017 |
+| 18 | Should string chunks stay Racket strings (4 bytes per character) or use UTF-8 bytes with different indexing? Raised implicitly by the memory benchmark; not yet discussed.                                  |      018 |
+| 19 | Is a per-leaf summary (for example a line count in the chunk) or a wide-node layout the preferred base for a future line-aware rope? The ADR-022 protocol decides it at Phase 5.                                                                        |      022 |
+| 20 | Does the =#:specialize= memo table (module-level lift with encapsulated compile-time mutation) meet the cleanliness bar?                                                                                      |      005 |

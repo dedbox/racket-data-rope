@@ -20,7 +20,8 @@
          racket/file
          racket/list
          racket/math
-         racket/string)
+         racket/string
+         racket/vector)
 
 (provide (all-defined-out))
 
@@ -28,20 +29,53 @@
 ;; Signatures
 ;; ---------------------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------------------
+;; Token elements (notes.org §3.1 Q4, ADR-019's token revisit)
+;; ---------------------------------------------------------------------------------------
+;;
+;; Token ropes are vector chunks of immutable token structs, each carrying its own relative
+;; span; `width` is a chunk procedure summing those spans, not a constant per element. The
+;; struct is deliberately three immediate fields -- kind tag, char width, relative span -- so
+;; the measured cost is what the pipeline's token would actually cost. It lives in the
+;; benchmark, not in data/rope: the pipeline type ships later.
+(struct token (kind width span))
+
+;; Deterministic token, mirroring §3.1 Q3: char widths of 5-10, a span that advances past one
+;; separator, a small kind tag. Same multiplicative step as the pseudo-offsets, so token text
+;; and edit positions are reproducible without a mutable PRNG.
+(define (token-of i)
+  (define w (+ 5 (modulo (+ (* i 7919) 13) 6)))
+  (token (modulo (+ (* i 31) 7) 8) w (+ w (+ 1 (modulo (* i 13) 2)))))
+
+;; The chunk-width procedure: the sum of a chunk's tokens' relative spans.
+(define (token-chunk-width c)
+  (for/fold ([w 0]) ([t (in-vector c)]) (+ w (token-span t))))
+
+;; A deterministic token vector of `len` tokens starting at index `start`.
+(define (token-vector start len)
+  (build-vector len (λ (i) (token-of (+ start i)))))
+
 ;; A chunk-sig with caller-chosen limits. `elem` selects the chunk representation: 'string for
-;; string-sig, 'bytes for bytes-sig.
+;; string-sig, 'bytes for bytes-sig, 'token for the vector-of-tokens sig above.
 (define (make-sig #:limit limit #:merge-limit merge-limit #:elem [elem 'string])
   (cond [(eq? elem 'string)
          (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
                          #:slice substring #:append string-append
                          #:width 1 #:limit limit #:merge-limit merge-limit)]
+        [(eq? elem 'token)
+         (make-chunk-sig #:empty (vector) #:length vector-length #:ref vector-ref
+                         #:slice vector-copy #:append vector-append
+                         #:width token-chunk-width #:limit limit #:merge-limit merge-limit)]
         [else
          (make-chunk-sig #:empty #"" #:length bytes-length #:ref bytes-ref
                          #:slice subbytes #:append bytes-append
                          #:width 1 #:limit limit #:merge-limit merge-limit)]))
 
 ;; The element type a signature works over, for choosing the document text.
-(define (sig-elem σ) (if (string? (chunk-sig-empty σ)) 'string 'bytes))
+(define (sig-elem σ)
+  (cond [(vector? (chunk-sig-empty σ)) 'token]
+        [(string? (chunk-sig-empty σ)) 'string]
+        [else 'bytes]))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Deterministic document text
@@ -110,6 +144,29 @@
 (define (buffer-load σ n)
   (define whole (code-string 0 n))
   (chunk->rope σ (if (eq? 'bytes (elem-of σ)) (string->bytes/utf-8 whole) whole)))
+
+;; ---------------------------------------------------------------------------------------
+;; Loading token documents
+;; ---------------------------------------------------------------------------------------
+
+;; The piece an incremental lexer reads a file in, in tokens -- independent of the leaf limit,
+;; like doc-piece is for characters.
+(define token-piece 4096)
+
+;; Loads a rope of `n` tokens by appending runs of `piece` tokens, as a file port would.
+;; Returns (values rope pieces-loaded); each run dies right after it is consumed.
+(define (load-token-doc σ n #:piece [piece token-piece])
+  (define nrows (quotient (+ n (sub1 piece)) piece))
+  (let fold ([ρ empty-rope] [row 0])
+    (cond [(= row nrows) (values ρ row)]
+          [else (fold (rope-concat σ ρ
+                                   (chunk->rope σ (token-vector (* row piece)
+                                                  (max 1 (min piece (- n (* row piece)))))))
+                      (add1 row))])))
+
+;; Whole-buffer load: one token vector of `n` tokens split into bounded leaves by chunk->rope.
+(define (buffer-load-tokens σ n)
+  (chunk->rope σ (token-vector 0 n)))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Timers

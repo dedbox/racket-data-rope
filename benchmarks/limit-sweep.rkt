@@ -1,12 +1,16 @@
 #lang racket/base
 
 ;;; benchmarks/limit-sweep.rkt -- the measurement that decides string-sig's and bytes-sig's
-;;; #:limit and #:merge-limit (ADR-019, notes.org §3.2 Q8 and Q11).
+;;; #:limit and #:merge-limit (ADR-019, notes.org §3.2 Q8 and Q11), and now the token vector-sig's
+;;; limits too (ADR-019's token revisit clause).
 ;;;
 ;;; The winner, recorded here so a rerun can be compared against it: string-sig 512/64 (limit
 ;;; 512, merge-limit 64) and bytes-sig 2048/512. Both declare a merge-limit well below the limit,
 ;;; which is what makes typing and patching cheap; the read path pays roughly 10% over its best.
-;;; vector-sig keeps the default merge-limit == limit because nothing measures it.
+;;; vector-sig keeps the default merge-limit == limit because nothing measures it -- that gap is
+;;; what elem=token below closes (notes.org §3.1 Q4: token ropes are vector chunks of immutable
+;;; token structs carrying their own relative spans; the token-sig is built in limit-harness.rkt,
+;;; NOT in data/rope, because the pipeline type ships later).
 ;;;
 ;;; The workload is a programming editor's incremental parser pipeline: a buffer is loaded,
 ;;; edited by typing and by 4-for-4 patches, and read back by the lexer -- per-token slices,
@@ -14,8 +18,15 @@
 ;;; Everything a limit changes shows up in one of the four metrics this sweep prints: latency,
 ;;; copy bytes, tree shape, resident memory.
 ;;;
+;;; With elem=token the ladder is re-based per §3.1 Q3 (R4): token counts of 140 / 1400 / 7000 /
+;;; 30000 / 70000, i.e. ~1-10 kilochars typical (~140-1400 tokens at 5-10 chars/token), 20-50 K
+;;; chars large (~7000 tokens), a few hundred kilochars at stress (~30-70 K tokens). Limits sweep
+;;; 32/64/128/256/512 with merge-limit at limit/8, limit/4, limit/2, and limit. These token
+;;; values are the bare-run defaults; text runs pass them explicitly.
+;;;
 ;;; Run it as:
 ;;;   raco make benchmarks/limit-harness.rkt benchmarks/limit-sweep.rkt
+;;;   racket benchmarks/limit-sweep.rkt elem=token
 ;;;   racket benchmarks/limit-sweep.rkt elem=string sizes=1000000,10000000 \
 ;;;     limits=256,512,1024,2048,4096,8192,16384 merges=limit,limit/2,limit/4
 ;;;
@@ -99,6 +110,58 @@
   ρ)
 
 ;; ---------------------------------------------------------------------------------------
+;; Token-pipeline operations (notes.org §3.1 Q4: vector chunks of token structs)
+;; ---------------------------------------------------------------------------------------
+
+;; Typing at the token level: replace one token at a pseudo-random position. Replacement --
+;; not insertion -- keeps the token count stable across a run, so every configuration is edited
+;; on a constant-size buffer; an insertion would grow the buffer one token per sample and let
+;; a large `limit` drift into a different tree shape mid-run.
+(define (op-token-type σ ρ i)
+  (define len (rope-length ρ))
+  (define pos (pseudo-offset i len))
+  (rope-splice σ ρ pos (+ pos 1) (chunk->rope σ (vector (token-of (+ i 1000000)))))
+  )
+
+;; A 4-for-4 patch: replace four tokens at a pseudo-random position. As in op-edit4-4, the
+;; pseudo-offset can land within the rope's last three tokens, so it is clamped to the last
+;; complete 4-token window.
+(define (op-token-patch σ ρ i)
+  (define len (rope-length ρ))
+  (define pos (min (pseudo-offset i len) (max 0 (- len 4))))
+  (rope-splice σ ρ pos (+ pos 4) (chunk->rope σ (token-vector (* i 4) 4)))
+  )
+
+;; A lexer slice: cut a short window of tokens out of the buffer. The rope is unchanged, so the
+;; sampler keeps the full buffer for every sample (the slice result is discarded); unlike the
+;; text op-token-slice, this does not thread the slice as the new buffer.
+(define (op-token-window-slice σ ρ i)
+  (define len (rope-length ρ))
+  (define pos (pseudo-offset i (sub1 len)))
+  (rope-slice σ ρ pos (min len (+ pos (+ 2 (modulo i 10)))))
+  ρ)
+
+;; Random token access: one token read at a pseudo-random index.
+(define (op-token-randref σ ρ i)
+  (rope-ref σ ρ (pseudo-offset i (rope-length ρ)))
+  ρ)
+
+;; Sequential access: a run of consecutive token reads -- a lexer line's worth.
+(define (op-token-seqref σ ρ i)
+  (define len (rope-length ρ))
+  (define start (quotient len 2))
+  (for ([k 100] #:when (< (+ start k) len))
+    (rope-ref σ ρ (+ start k)))
+  ρ)
+
+;; Whole-rope serialization: the full re-parse. Fold the chunks into one contiguous vector,
+;; as rope->string does for text; the result is discarded and the rope stays threaded.
+(define (op-token-flatten σ ρ i)
+  (define out (make-vector (rope-length ρ)))
+  (rope-fold-chunks (λ (k c) (vector-copy! out k c) (+ k (vector-length c))) 0 ρ)
+  ρ)
+
+;; ---------------------------------------------------------------------------------------
 ;; Scenario table
 ;; ---------------------------------------------------------------------------------------
 
@@ -129,6 +192,22 @@
         (scenario 'seqref  "sequential element access"    op-seq-ref     'batch  20 0)
         (scenario 'flat    "flatten whole buffer"         op-flatten     'batch  3 0)))
 
+;; Token-pipeline scenarios (ADR-019's token revisit): the same shapes as the editor pipeline
+;; at token granularity. Windowed scenarios run 1024 windows like the text ones; construction
+;; and flatten are batched, as load and flatten are for text, with counts raised so a batch
+;; total stays above the timer's 0.25 µs resolution on the smallest sizes.
+(define token-scenario-list
+  (list (scenario 'tload    "load tokens (chunk->rope)"
+                  (λ (σ ρ i) (buffer-load-tokens σ (rope-length ρ))) 'batch 5 0)
+        (scenario 'tloadp   "load tokens in pieces"
+                  (λ (σ ρ i) (let-values ([(r _) (load-token-doc σ (rope-length ρ))]) r)) 'batch 5 0)
+        (scenario 'tappend  "token edit: replace 1 token"  op-token-type    'window 1024 32)
+        (scenario 'tpatch   "token patch: 4-for-4"         op-token-patch   'window 1024 32)
+        (scenario 'tslice   "lexer: token slice window"    op-token-window-slice 'window 1024 32)
+        (scenario 'trandref "random token access"          op-token-randref 'window 1024 64)
+        (scenario 'tseqref  "sequential token access"      op-token-seqref  'batch  20 0)
+        (scenario 'tflat    "flatten token rope"           op-token-flatten 'batch  10 0)))
+
 ;; ---------------------------------------------------------------------------------------
 ;; One configuration
 ;; ---------------------------------------------------------------------------------------
@@ -139,14 +218,17 @@
 
 ;; Runs every scenario for one (elem, limit, merge-limit) configuration at one document size.
 ;; The rope is loaded once and threaded through the scenarios; the load scenarios build their own
-;; buffer so they measure the construction path rather than the shared one.
+;; buffer so they measure the construction path rather than the shared one. For elem=token the
+;; scenarios are the token-pipeline list and the document is a token vector ladder.
 (define (run-config elem limit merge size #:scale scale #:scenarios scen-ids)
   (define σ (make-sig #:limit limit #:merge-limit merge #:elem elem))
-  (define-values (ρ _) (load-doc σ size))
+  (define-values (ρ _)
+    (if (eq? elem 'token) (load-token-doc σ size) (load-doc σ size)))
+  (define scen (if (eq? elem 'token) token-scenario-list scenario-list))
   (define leaves (rope-leaf-count ρ))
   (define height (rope-height ρ))
   (define rss (live-rss (λ () ρ)))
-  (for/list ([s (in-list scenario-list)]
+  (for/list ([s (in-list scen)]
              #:when (or (null? scen-ids) (memq (scenario-id s) scen-ids)))
     ;; A windowed scenario runs reps × window operations; a batch runs reps calls.
     (define reps (max 1 (* scale (scenario-reps s))))
@@ -171,9 +253,13 @@
 ;; The layout constants are measured -- 32 bytes per leaf (one header word plus three slots) and
 ;; 48 bytes per node (one header word plus five slots), calibrated with /proc/self/status deltas
 ;; over 4M structs -- and the node count is leaves-1, which is what `chunk->rope` builds. A
-;; string chunk costs 4 bytes per element on the CS backend; a bytes chunk costs 1 byte.
+;; string chunk costs 4 bytes per element on the CS backend; a bytes chunk costs 1 byte. A token
+;; chunk costs 8 bytes for the vector slot plus ~32 bytes for the immutable token struct (the
+;; same 3-field layout as a leaf), so ~40 bytes per token plus the tree.
 (define (retained-per-elem elem size leaves)
-  (define payload (if (eq? elem 'bytes) size (* size 4)))
+  (define payload (cond [(eq? elem 'bytes) size]
+                        [(eq? elem 'token) (* size 40)]
+                        [else (* size 4)]))
   (define tree (+ (* leaves 32) (* (max 0 (- leaves 1)) 48)))
   (exact->inexact (/ (+ payload tree) size)))
 
@@ -257,10 +343,13 @@
 
 (define (main args)
   (define opts (parse-args args))
-  (define elems (map string->symbol (string-split (opt opts 'elem "string") ",")))
-  (define sizes (numbers (opt opts 'sizes "1000000,10000000")))
-  (define limits (numbers (opt opts 'limits "512,1024,2048,4096")))
-  (define merge-exprs (string-split (opt opts 'merges "limit") ","))
+  ;; Bare-run defaults are the token revisit ladder (§3.1 Q3, R4): token counts 140 / 1400 /
+  ;; 7000 / 30000 / 70000 with limits 32..512 and merge-limit at limit/8, limit/4, limit/2,
+  ;; limit. Text runs pass elem/sizes/limits/merges explicitly, as above.
+  (define elems (map string->symbol (string-split (opt opts 'elem "token") ",")))
+  (define sizes (numbers (opt opts 'sizes "140,1400,7000,30000,70000")))
+  (define limits (numbers (opt opts 'limits "32,64,128,256,512")))
+  (define merge-exprs (string-split (opt opts 'merges "limit/8,limit/4,limit/2,limit") ","))
   (define scen-ids (map string->symbol (string-split (opt opts 'scenarios "") ",")))
   (define scale (or (string->number (opt opts 'scale "1")) 1))
   (define top (or (string->number (opt opts 'top "5")) 5))

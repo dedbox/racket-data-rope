@@ -26,7 +26,7 @@
 (provide (all-defined-out))
 
 ;; ---------------------------------------------------------------------------------------
-;; Signatures
+;; Dictionaries
 ;; ---------------------------------------------------------------------------------------
 
 ;; ---------------------------------------------------------------------------------------
@@ -55,26 +55,26 @@
 (define (token-vector start len)
   (build-vector len (λ (i) (token-of (+ start i)))))
 
-;; A chunk-sig with caller-chosen limits. `elem` selects the chunk representation: 'string for
-;; string-sig, 'bytes for bytes-sig, 'token for the vector-of-tokens sig above.
-(define (make-sig #:limit limit #:merge-limit merge-limit #:elem [elem 'string])
+;; A chunk-dict with caller-chosen limits. `elem` selects the chunk representation: 'string for
+;; string-dict, 'bytes for bytes-dict, 'token for the vector-of-tokens dict above.
+(define (make-dict #:limit limit #:merge-limit merge-limit #:elem [elem 'string])
   (cond [(eq? elem 'string)
-         (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+         (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                          #:slice substring #:append string-append
                          #:width 1 #:limit limit #:merge-limit merge-limit)]
         [(eq? elem 'token)
-         (make-chunk-sig #:empty (vector) #:length vector-length #:ref vector-ref
+         (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                          #:slice vector-copy #:append vector-append
                          #:width token-chunk-width #:limit limit #:merge-limit merge-limit)]
         [else
-         (make-chunk-sig #:empty #"" #:length bytes-length #:ref bytes-ref
+         (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
                          #:slice subbytes #:append bytes-append
                          #:width 1 #:limit limit #:merge-limit merge-limit)]))
 
-;; The element type a signature works over, for choosing the document text.
-(define (sig-elem σ)
-  (cond [(vector? (chunk-sig-empty σ)) 'token]
-        [(string? (chunk-sig-empty σ)) 'string]
+;; The element type a dictionary works over, for choosing the document text.
+(define (dict-elem σ)
+  (cond [(vector? (chunk-dict-empty σ)) 'token]
+        [(string? (chunk-dict-empty σ)) 'string]
         [else 'bytes]))
 
 ;; ---------------------------------------------------------------------------------------
@@ -113,8 +113,8 @@
       (define k (min chunk (- len i)))
       (list->string (for/list ([j k]) (code-char (+ start i j)))))))
 
-;; The element type a signature works over, used to pick the document's chunk type.
-(define (elem-of σ) (sig-elem σ))
+;; The element type a dictionary works over, used to pick the document's chunk type.
+(define (elem-of σ) (dict-elem σ))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Loading documents
@@ -124,7 +124,7 @@
 ;; load touches is a separate metric from the whole-buffer chunk->rope case.
 (define doc-piece 65536)
 
-;; One deterministic run of document text, as a chunk of the signature's element type.
+;; One deterministic run of document text, as a chunk of the dictionary's element type.
 (define (doc-run σ n row #:piece [piece doc-piece])
   (define len (max 1 (min piece (- n (* row piece)))))
   (define s (code-string (* row piece) len))

@@ -13,29 +13,29 @@
   ;; Fixtures and helpers
   ;; =====================================================================
 
-  ;; A chunk-sig over strings, one element per character (width == length).
-  (define (char-sig [limit 4] [merge-limit limit])
-    (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+  ;; A chunk-dict over strings, one element per character (width == length).
+  (define (char-dict [limit 4] [merge-limit limit])
+    (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                     #:slice substring #:append string-append
                     #:width 1 #:limit limit #:merge-limit merge-limit))
 
-  ;; A chunk-sig over lists of strings: length counts strings, width counts characters,
+  ;; A chunk-dict over lists of strings: length counts strings, width counts characters,
   ;; so width and length can diverge and exercise the additive measure independently.
-  (define (list-sig [limit 4])
-    (make-chunk-sig #:empty '() #:length length
+  (define (list-dict [limit 4])
+    (make-chunk-dict #:empty '() #:length length
                     #:ref (lambda (c i) (list-ref c i))
                     #:slice (lambda (c i j) (take (drop c i) (- j i)))
                     #:append append
                     #:width (lambda (c) (apply + (map string-length c)))
                     #:limit limit))
 
-  (define σ4 (char-sig 4))   ; default element type: chars, limit 4, merge-limit 4
-  (define σ8 (char-sig 8))
-  (define σw (list-sig))     ; variable width
+  (define σ4 (char-dict 4))   ; default element type: chars, limit 4, merge-limit 4
+  (define σ8 (char-dict 8))
+  (define σw (list-dict))     ; variable width
 
   (define (leaf! s) (make-leaf σ4 s))
 
-  ;; Element sequence of a rope as a list (works for any chunk-sig).
+  ;; Element sequence of a rope as a list (works for any chunk-dict).
   (define (elems σ ρ)
     (for/list ([i (in-range (rope-length ρ))]) (rope-ref σ ρ i)))
 
@@ -78,25 +78,25 @@
         (check-eq? (make-leaf σ4 "") empty-rope))))
 
   ;; =====================================================================
-  ;; chunk-sig construction
+  ;; chunk-dict construction
   ;; =====================================================================
-  (define suite-chunk-sig
-    (test-suite "chunk-sig"
+  (define suite-chunk-dict
+    (test-suite "chunk-dict"
       (test-case "constant width is wrapped as a procedure"
-        (define cs (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+        (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append
                                    #:width 3 #:limit 10))
-        (check-true (procedure? (chunk-sig-width cs)))
-        (check-equal? ((chunk-sig-width cs) "abc") 9))
+        (check-true (procedure? (chunk-dict-width cs)))
+        (check-equal? ((chunk-dict-width cs) "abc") 9))
       (test-case "procedure width is used directly"
-        (define cs (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+        (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append
                                    #:width (lambda (c) (string-length c)) #:limit 10))
-        (check-equal? ((chunk-sig-width cs) "abc") 3))
+        (check-equal? ((chunk-dict-width cs) "abc") 3))
       (test-case "merge-limit defaults to limit"
-        (define cs (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+        (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append #:limit 7))
-        (check-equal? (chunk-sig-merge-limit cs) 7))))
+        (check-equal? (chunk-dict-merge-limit cs) 7))))
 
   ;; =====================================================================
   ;; make-leaf / make-node / rope-* accessors
@@ -228,7 +228,7 @@
         (check-equal? (rope-length ρ) 5)
         (check-equal? (length (rope-chunks ρ)) 2))
       (test-case "merge-limit below limit suppresses merges that fit under the limit"
-        (define σm (char-sig 10 3))                 ; limit 10, merge-limit 3
+        (define σm (char-dict 10 3))                 ; limit 10, merge-limit 3
         (define ρ (chunk->rope σm "ab"))
         (define ρ2 (chunk->rope σm "cd"))
         (check-equal? (length (rope-chunks (rope-concat σm ρ ρ2))) 2)) ; 2+2 > 3
@@ -452,7 +452,7 @@
   (run-tests
    (test-suite "core"
      suite-empty-rope
-     suite-chunk-sig
+     suite-chunk-dict
      suite-constructors
      suite-chunk->rope
      suite-rotations

@@ -22,19 +22,20 @@
 ;;;      Sets" (2016), which yields worst-case O(log n) with a single balance routine and no
 ;;;      rebuilds, thresholds or amortization.
 ;;;
-;;;   3. The only type-specific behaviour is the `chunk-sig` (the "chunk algebra" or
-;;;      dictionary): a sealed record of the primitive operations on a chunk (length, ref,
-;;;      slice, append, ...). It is passed explicitly as the first argument to exactly those
-;;;      functions that must look inside a chunk. Everything else -- balance, navigation,
-;;;      iteration, structural sharing -- is identical for every type and compiled once.
+;;;   3. The only type-specific behaviour is the chunk algebra: the primitive operations
+;;;      that must look inside a chunk. It is implemented by the `chunk-dict` -- a
+;;;      dictionary of those operations (length, ref, slice, append, ...), passed
+;;;      explicitly as the first argument to exactly those functions that need it.
+;;;      Everything else -- balance, navigation, iteration, structural sharing -- is
+;;;      identical for every type and compiled once.
 ;;;
 ;;; In the project's design (see notes.org) this is the "core" layer. The type layer
-;;; (`define-rope-type`) turns a chunk-sig into a runtime constant plus a compile-time index;
+;;; (`define-rope-type`) turns a chunk-dict into a runtime constant plus a compile-time index;
 ;;; the operations and classes layers sit on top. Nothing here depends on either, so this
 ;;; file can be compiled, tested and benchmarked on its own.
 ;;;
 ;;; Editing notes:
-;;;   * `σ` is the conventional name for a chunk-sig argument; `ρ` (rho) for a rope.
+;;;   * `σ` is the conventional name for a chunk-dict argument; `ρ` (rho) for a rope.
 ;;;   * Both structs are `#:authentic #:sealed`, so every predicate and accessor is a single
 ;;;     record-type test. That is the whole point of erasure: one pair of structs for every
 ;;;     type, no per-type subtypes, no per-node closures, no runtime type tag.
@@ -70,14 +71,15 @@
 (define empty-rope (leaf 0 0 #f))
 
 ;; ---------------------------------------------------------------------------------------
-;; The chunk algebra (a.k.a. the chunk dictionary)
+;; The chunk algebra, implemented as a chunk dictionary
 ;; ---------------------------------------------------------------------------------------
 ;;
-;; This sealed record is the ONLY type-specific part of the whole system. It bundles the
-;; primitive operations that must look inside a chunk. A rope carries no reference to it --
-;; it is passed explicitly to the few functions that need it -- which is what keeps ropes
-;; uniform and erased. Defining a new rope type (see notes.org) means defining one of these
-;; and passing it to the functions below; the tree code itself never changes.
+;; The chunk algebra is the concept: the operations that must look inside a chunk. This
+;; sealed record is its implementation -- the chunk dictionary -- and the ONLY
+;; type-specific part of the whole system. A rope carries no reference to it: it is passed
+;; explicitly to the few functions that need it, which is what keeps ropes uniform and
+;; erased. Defining a new rope type means supplying one of these dictionaries and passing
+;; it to the functions below; the tree code itself never changes.
 ;;
 ;;   empty       : the empty chunk
 ;;   length      : chunk → nat        (element count of a chunk)
@@ -87,14 +89,14 @@
 ;;   width       : chunk → nat        (additive measure of a chunk)
 ;;   limit       : the largest chunk a leaf may hold
 ;;   merge-limit : boundary leaves are merged on concat when their combined length is <= this
-(struct chunk-sig (empty length ref slice append width limit merge-limit)
+(struct chunk-dict (empty length ref slice append width limit merge-limit)
   #:authentic #:sealed)
 
-;; Constructor for chunk-sig. `width` may be either a procedure on chunks or a constant
+;; Constructor for chunk-dict. `width` may be either a procedure on chunks or a constant
 ;; width per element; a constant is wrapped so that `width` always behaves as a procedure.
-(define (make-chunk-sig #:empty e #:length len #:ref ref #:slice slice #:append app
+(define (make-chunk-dict #:empty e #:length len #:ref ref #:slice slice #:append app
                         #:width [width 1] #:limit limit #:merge-limit [merge-limit limit])
-  (chunk-sig e len ref slice app
+  (chunk-dict e len ref slice app
              (if (procedure? width) width (λ (c) (* width (len c))))
              limit merge-limit))
 
@@ -128,11 +130,11 @@
         (add1 (max (rope-height l) (rope-height r)))
         l r))
 
-;; Builds a leaf from a chunk, consulting the chunk-sig for its measures. A zero-length
+;; Builds a leaf from a chunk, consulting the chunk-dict for its measures. A zero-length
 ;; chunk collapses to the shared empty rope rather than producing an empty leaf.
 (define (make-leaf σ c)
-  (define n ((chunk-sig-length σ) c))
-  (if (= n 0) empty-rope (leaf n ((chunk-sig-width σ) c) c)))
+  (define n ((chunk-dict-length σ) c))
+  (if (= n 0) empty-rope (leaf n ((chunk-dict-width σ) c) c)))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Building a tree from a single chunk
@@ -143,9 +145,9 @@
 ;; at most one, which makes the result AVL-balanced by construction. The middle chunk is
 ;; reused verbatim (no copy) when it spans the whole input; otherwise it is sliced.
 (define (chunk->rope σ c)
-  (define n ((chunk-sig-length σ) c))
-  (define limit (chunk-sig-limit σ))
-  (define slice (chunk-sig-slice σ))
+  (define n ((chunk-dict-length σ) c))
+  (define limit (chunk-dict-limit σ))
+  (define slice (chunk-dict-slice σ))
   (let build ([i 0] [j n])
     (define Δ (- j i))
     (cond [(= Δ 0) empty-rope]
@@ -328,8 +330,8 @@
         [else
          (define a (last-leaf l))
          (define b (first-leaf r))
-         (cond [(<= (+ (leaf-length a) (leaf-length b)) (chunk-sig-merge-limit σ))
-                (define a+b (make-leaf σ ((chunk-sig-append σ) (leaf-chunk a) (leaf-chunk b))))
+         (cond [(<= (+ (leaf-length a) (leaf-length b)) (chunk-dict-merge-limit σ))
+                (define a+b (make-leaf σ ((chunk-dict-append σ) (leaf-chunk a) (leaf-chunk b))))
                 (define l′ (replace-last-leaf l a+b))
                 (define r′ (drop-first-leaf r))
                 (if (rope-empty? r′) l′ (rope-join l′ r′))]
@@ -351,8 +353,8 @@
           [(= i (rope-length ρ)) (values ρ empty-rope)]
           [(leaf? ρ)
            (define c (leaf-chunk ρ))
-           (values (make-leaf σ ((chunk-sig-slice σ) c 0 i))
-                   (make-leaf σ ((chunk-sig-slice σ) c i (leaf-length ρ))))]
+           (values (make-leaf σ ((chunk-dict-slice σ) c 0 i))
+                   (make-leaf σ ((chunk-dict-slice σ) c i (leaf-length ρ))))]
           [else
            (define-values (l r) (node-children ρ))
            (define n (rope-length l))
@@ -366,7 +368,7 @@
   (let slice ([ρ ρ] [i i] [j j])
     (cond [(= i j) empty-rope]
           [(and (= i 0) (= j (rope-length ρ))) ρ]
-          [(leaf? ρ) (make-leaf σ ((chunk-sig-slice σ) (leaf-chunk ρ) i j))]
+          [(leaf? ρ) (make-leaf σ ((chunk-dict-slice σ) (leaf-chunk ρ) i j))]
           [else
            (define-values (l r) (node-children ρ))
            (define n (rope-length l))
@@ -386,13 +388,13 @@
 ;; ---------------------------------------------------------------------------------------
 
 ;; Returns the element at index `i`. Descends by the cached left-subtree length; the chunk
-;; reference is the only place the chunk-sig is consulted on this path, so on a leaf the
+;; reference is the only place the chunk-dict is consulted on this path, so on a leaf the
 ;; element is read directly. (See notes.org: the hot-path optimization inlines this leaf case
 ;; and shares the tree walk.)
 (define (rope-ref σ ρ i)
   (let loop ([ρ ρ] [i i])
     (if (leaf? ρ)
-        ((chunk-sig-ref σ) (leaf-chunk ρ) i)
+        ((chunk-dict-ref σ) (leaf-chunk ρ) i)
         (let ([n (rope-length (node-left ρ))])
           (if (< i n)
               (loop (node-left ρ) i)
@@ -433,13 +435,13 @@
 ;; only zero-length rope is the shared empty rope at the top. `top?` distinguishes the root
 ;; (which may legitimately be `empty-rope`) from an empty leaf elsewhere (which is an error).
 (define (rope-valid? σ ρ)
-  (define limit (chunk-sig-limit σ))
+  (define limit (chunk-dict-limit σ))
   (let check ([ρ ρ] [top? #t])
     (cond [(leaf? ρ) (if (= (leaf-length ρ) 0)
                          (and top? (eq? ρ empty-rope))
                          (and (<= (leaf-length ρ) limit)
-                              (= (leaf-length ρ) ((chunk-sig-length σ) (leaf-chunk ρ)))
-                              (= (leaf-width ρ) ((chunk-sig-width σ) (leaf-chunk ρ)))))]
+                              (= (leaf-length ρ) ((chunk-dict-length σ) (leaf-chunk ρ)))
+                              (= (leaf-width ρ) ((chunk-dict-width σ) (leaf-chunk ρ)))))]
           [else
            (define-values (l r) (node-children ρ))
            (and (check l #f)

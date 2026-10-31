@@ -1,33 +1,34 @@
 #lang racket/base
 
-;;; data/rope/sigs.rkt -- chunk signatures for the common element types.
+;;; data/rope/dicts.rkt -- chunk dictionaries for the common element types.
 ;;;
 ;;; This module is the bridge between the erased rope core (data/rope/core.rkt) and
 ;;; Racket's own sequence types. Everything in the core is type-agnostic: the tree
 ;;; algorithms work the same whatever the elements are. The only type-specific part is
-;;; the chunk-sig -- a sealed record of the primitive operations that must look inside a
-;;; chunk. This file supplies one chunk-sig per common element type, plus the conversion
-;;; helpers that turn a rope into contiguous Racket data and back again.
+;;; the chunk algebra, implemented as a `chunk-dict`: a sealed record of the primitive
+;;; operations that must look inside a chunk. This file supplies one chunk dictionary per
+;;; common element type, plus the conversion helpers that turn a rope into contiguous
+;;; Racket data and back again.
 ;;;
 ;;; Where it sits in the system (see notes.org):
 ;;;
-;;;   core     the tree and its algorithms                              -- data/rope/core.rkt
-;;;   sigs     concrete chunk algebras                                  -- this module
-;;;   types    a nominal rope type = a chunk-sig + a compile-time index -- M1
-;;;   ops      generic operations over a rope type                      -- M1+
-;;;   classes  equality/ordering/etc.                                   -- M4
+;;;   core     the tree and its algorithms                                -- data/rope/core.rkt
+;;;   dicts    chunk dictionaries implementing the algebras               -- this module
+;;;   types    a nominal rope type = a chunk-dict + a compile-time index  -- M1
+;;;   ops      generic operations over a rope type                        -- M1+
+;;;   classes  equality/ordering/etc.                                     -- M4
 ;;;
 ;;; So this is the layer a maintainer reads first when they want to know "what does a
-;;; rope of characters actually hold?". The type layer wraps a sig like this one as a
-;;; runtime constant plus a compile-time name; nothing here knows about types, names,
+;;; rope of characters actually hold?". The type layer wraps a dictionary like this one as
+;;; a runtime constant plus a compile-time name; nothing here knows about types, names,
 ;;; or the macro layer.
 ;;;
 ;;; Reading notes:
-;;;   * `σ` names a chunk-sig argument, `ρ` a rope, `c` a chunk. Same convention as core.rkt.
+;;;   * `σ` names a chunk-dict argument, `ρ` a rope, `c` a chunk. Same convention as core.rkt.
 ;;;   * Every binding is exported (all-defined-out): there are no private names here.
-;;;   * A sig is a *runtime* value, not syntax. Call sites pass it explicitly, e.g.
-;;;     (rope-ref string-sig ρ i). The type layer makes that passing implicit later.
-;;;   * Signatures contain no equality, hashing or ordering operations on purpose. Content
+;;;   * A dictionary is a *runtime* value, not syntax. Call sites pass it explicitly, e.g.
+;;;     (rope-ref string-dict ρ i). The type layer makes that passing implicit later.
+;;;   * Dictionaries contain no equality, hashing or ordering operations on purpose. Content
 ;;;     comparison is a class operation in the design, and `equal?` on ropes falls back to
 ;;;     identity (eq?): these structs are opaque and carry no runtime type evidence.
 
@@ -37,14 +38,14 @@
 (provide (all-defined-out))
 
 ;; ---------------------------------------------------------------------------------------
-;; Signatures for the three standard element types
+;; Dictionaries for the three standard element types
 ;; ---------------------------------------------------------------------------------------
 ;;
-;; Each signature is a bundle of Racket primitives over one chunk representation:
+;; Each dictionary is a bundle of Racket primitives over one chunk representation:
 ;;
-;;   string-sig   chunks are strings  -- elements are chars
-;;   bytes-sig    chunks are bytes    -- elements are fixnums (8-bit exact integers)
-;;   vector-sig   chunks are vectors  -- elements are any value
+;;   string-dict   chunks are strings  -- elements are chars
+;;   bytes-dict    chunks are bytes    -- elements are fixnums (8-bit exact integers)
+;;   vector-dict   chunks are vectors  -- elements are any value
 ;;
 ;; `width` is 1 everywhere: each element occupies exactly one index, so width == length.
 ;;
@@ -52,7 +53,7 @@
 ;; runs the editor pipeline (load, typing, 4-for-4 patches, deletion, paste, lexer slices and
 ;; chunk scans, random and sequential access, flatten) over 1 MB, 10 MB, and 100 MB buffers and
 ;; reports percentiles with samples that straddled a garbage collection counted separately.
-;; The chosen values for string-sig and bytes-sig are the configuration whose clean tail -- the
+;; The chosen values for string-dict and bytes-dict are the configuration whose clean tail -- the
 ;; p99 over samples that did not overlap a collection -- is the smallest on the edit path while
 ;; the read path stays within a few percent of its best. They are tunables, not invariants, and
 ;; `merge-limit` must stay <= `limit`: a merged boundary leaf is bounded by `merge-limit`, and a
@@ -66,25 +67,25 @@
 ;;     and keeps the tree compact. Typing and patching want a small merge-limit; reads do not
 ;;     care, because a chunk stays bounded by `limit` either way.
 ;;
-;; Measured on a 10 MB buffer (nanoseconds, p50 / clean p99): string-sig typing is 536/822 at
+;; Measured on a 10 MB buffer (nanoseconds, p50 / clean p99): string-dict typing is 536/822 at
 ;; 512/64 against 1251/2317 at 512/512 -- merging less is the biggest latency win in this file.
 ;; Its read path then costs about 10% more than the best configuration: random access 203 ns
-;; against 165 ns at 1024/128. bytes-sig at 2048/512 types at 363/596, patches at 1080/1258,
+;; against 165 ns at 1024/128. bytes-dict at 2048/512 types at 363/596, patches at 1080/1258,
 ;; deletes at 806/954, pastes at 910/1042 -- all better than the same shapes with
 ;; merge-limit == limit (681/893 typing, 1305/8670 patches). Byte chunks copy cheaper than
-;; string chunks, so bytes-sig's best `limit` is larger than string-sig's.
+;; string chunks, so bytes-dict's best `limit` is larger than string-dict's.
 ;; Retained size is payload-dominated: a rope costs about 1.04 bytes per element as bytes and
 ;; about 4.16 as string characters, of which the tree adds less than 0.2 bytes per element.
 
-(define string-sig (make-chunk-sig #:empty "" #:length string-length #:ref string-ref
+(define string-dict (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append
                                    #:width 1 #:limit 512 #:merge-limit 64))
 
-(define bytes-sig (make-chunk-sig #:empty #"" #:length bytes-length #:ref bytes-ref
+(define bytes-dict (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
                                   #:slice subbytes #:append bytes-append
                                   #:width 1 #:limit 2048 #:merge-limit 512))
 
-(define vector-sig (make-chunk-sig #:empty (vector) #:length vector-length #:ref vector-ref
+(define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                                    #:slice vector-copy #:append vector-append
                                    #:width 1 #:limit 128))
 
@@ -97,11 +98,11 @@
 ;; A source value smaller than the limit therefore becomes a single leaf holding the
 ;; original object -- no element copy at all.
 
-;; (string->rope str) is string-sig's constructor: (chunk->rope string-sig str).
-(define (string->rope str) (chunk->rope string-sig str))
+;; (string->rope str) is string-dict's constructor: (chunk->rope string-dict str).
+(define (string->rope str) (chunk->rope string-dict str))
 
-;; (bytes->rope bstr) is bytes-sig's constructor: (chunk->rope bytes-sig bstr).
-(define (bytes->rope bstr) (chunk->rope bytes-sig bstr))
+;; (bytes->rope bstr) is bytes-dict's constructor: (chunk->rope bytes-dict bstr).
+(define (bytes->rope bstr) (chunk->rope bytes-dict bstr))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Flattening a rope back into a source value
@@ -113,19 +114,19 @@
 ;; one chunk-at-a-time copy into it. The fold's accumulator is the byte position already
 ;; written, so each chunk is copied once at its own offset -- no intermediate chunk list.
 ;;
-;; They only apply to ropes built from the matching signature, because the buffer size and
-;; the copy operation assume chunks are strings / bytes of that type. A vector-sig rope has
+;; They only apply to ropes built from the matching dictionary, because the buffer size and
+;; the copy operation assume chunks are strings / bytes of that type. A vector-dict rope has
 ;; no flattened representation here; (rope-chunks ρ) does.
 
-;; Returns the characters of `ρ` as one string. Requires string-sig chunks.
+;; Returns the characters of `ρ` as one string. Requires string-dict chunks.
 ;; The buffer is sized by element count, which is correct because width == length for this
-;; signature (see above).
+;; dictionary (see above).
 (define (rope->string ρ)
   (define out (make-string (rope-length ρ)))
   (rope-fold-chunks (λ (i c) (string-copy! out i c) (+ i (string-length c))) 0 ρ)
   out)
 
-;; Returns the bytes of `ρ` as one byte string. Requires bytes-sig chunks.
+;; Returns the bytes of `ρ` as one byte string. Requires bytes-dict chunks.
 (define (rope->bytes ρ)
   (define out (make-bytes (rope-length ρ)))
   (rope-fold-chunks (λ (i c) (bytes-copy! out i c) (+ i (bytes-length c))) 0 ρ)

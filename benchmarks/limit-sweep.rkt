@@ -1,15 +1,15 @@
 #lang racket/base
 
-;;; benchmarks/limit-sweep.rkt -- the measurement that decides string-sig's and bytes-sig's
-;;; #:limit and #:merge-limit (ADR-019, notes.org §3.2 Q8 and Q11), and now the token vector-sig's
+;;; benchmarks/limit-sweep.rkt -- the measurement that decides string-dict's and bytes-dict's
+;;; #:limit and #:merge-limit (ADR-019, notes.org §3.2 Q8 and Q11), and now the token vector-dict's
 ;;; limits too (ADR-019's token revisit clause).
 ;;;
-;;; The winner, recorded here so a rerun can be compared against it: string-sig 512/64 (limit
-;;; 512, merge-limit 64) and bytes-sig 2048/512. Both declare a merge-limit well below the limit,
+;;; The winner, recorded here so a rerun can be compared against it: string-dict 512/64 (limit
+;;; 512, merge-limit 64) and bytes-dict 2048/512. Both declare a merge-limit well below the limit,
 ;;; which is what makes typing and patching cheap; the read path pays roughly 10% over its best.
-;;; vector-sig keeps the default merge-limit == limit because nothing measures it -- that gap is
+;;; vector-dict keeps the default merge-limit == limit because nothing measures it -- that gap is
 ;;; what elem=token below closes (notes.org §3.1 Q4: token ropes are vector chunks of immutable
-;;; token structs carrying their own relative spans; the token-sig is built in limit-harness.rkt,
+;;; token structs carrying their own relative spans; the token-dict is built in limit-harness.rkt,
 ;;; NOT in data/rope, because the pipeline type ships later).
 ;;;
 ;;; The workload is a programming editor's incremental parser pipeline: a buffer is loaded,
@@ -33,7 +33,7 @@
 ;;; Configuration grammar is `key=value` arguments (see `parse-args` below).
 
 (require data/rope/core
-         data/rope/sigs
+         data/rope/dicts
          racket/cmdline
          racket/list
          racket/format
@@ -47,7 +47,7 @@
 ;; A deterministic offset: a multiplicative step, no PRNG object, no mutable state.
 (define (pseudo-offset i len) (modulo (+ (* i 7919) 13) (max 1 len)))
 
-;; A chunk whose element type matches the signature: strings for string-sig, bytes for bytes-sig.
+;; A chunk whose element type matches the dictionary: strings for string-dict, bytes for bytes-dict.
 (define (chunk-of σ str)
   (if (eq? 'bytes (elem-of σ)) (string->bytes/utf-8 str) str))
 
@@ -88,7 +88,7 @@
   (define len (rope-length ρ))
   (define pos (pseudo-offset i (max 1 (- len 50000))))
   (define region (rope-slice σ ρ pos (+ pos (min 50000 (- len pos)))))
-  (rope-fold-chunks (λ (acc c) (+ acc ((chunk-sig-length σ) c))) 0 region)
+  (rope-fold-chunks (λ (acc c) (+ acc ((chunk-dict-length σ) c))) 0 region)
   ρ)
 
 ;; Random offset access: one element read at a pseudo-random index.
@@ -221,7 +221,7 @@
 ;; buffer so they measure the construction path rather than the shared one. For elem=token the
 ;; scenarios are the token-pipeline list and the document is a token vector ladder.
 (define (run-config elem limit merge size #:scale scale #:scenarios scen-ids)
-  (define σ (make-sig #:limit limit #:merge-limit merge #:elem elem))
+  (define σ (make-dict #:limit limit #:merge-limit merge #:elem elem))
   (define-values (ρ _)
     (if (eq? elem 'token) (load-token-doc σ size) (load-doc σ size)))
   (define scen (if (eq? elem 'token) token-scenario-list scenario-list))

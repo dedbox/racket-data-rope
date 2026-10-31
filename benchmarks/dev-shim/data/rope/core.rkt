@@ -16,7 +16,7 @@
 ;;; #:limit and #:merge-limit have therefore no oracle-side counterpart -- the sweep's
 ;;; config arguments shape the comparison, not the oracle. The mapping is otherwise one-to-one:
 ;;;
-;;;   empty-rope        empty-string-rope / empty-bytes-rope, chosen from the signature
+;;;   empty-rope        empty-string-rope / empty-bytes-rope, chosen from the dictionary
 ;;;   chunk->rope       source->rope (balanced build over 512-element chunks)
 ;;;   rope-concat       rope-append2 (concat plus on-demand rebalance)
 ;;;   rope-slice/splice start + end -> start + count   (the oracle takes a count)
@@ -26,7 +26,7 @@
 ;;;   rope-valid?       rope-mostly-balanced?
 ;;;
 ;;; The harness threads σ through every call and hands bare `empty-rope` as a value, so the
-;;; oracle-side type choice happens per call -- a signature check, a few ns against µs-sized
+;;; oracle-side type choice happens per call -- a dictionary check, a few ns against µs-sized
 ;;; operations.
 
 ;; dev's own type.rkt requires `rope/rope`; the typed structs subclass the struct types
@@ -40,21 +40,21 @@
          (all-from-out rope/rope))
 
 ;; ---------------------------------------------------------------------------------------
-;; A chunk signature the harness can build; the oracle's fixed configuration ignores the
-;; limits, and its accessors (chunk-sig-empty, chunk-sig-length) stay honest.
-(struct chunk-sig (empty length ref slice append width limit merge-limit)
+;; A chunk dictionary the harness can build; the oracle's fixed configuration ignores the
+;; limits, and its accessors (chunk-dict-empty, chunk-dict-length) stay honest.
+(struct chunk-dict (empty length ref slice append width limit merge-limit)
   #:authentic #:sealed)
 
-(define (make-chunk-sig #:empty e #:length len #:ref ref #:slice slice #:append app
+(define (make-chunk-dict #:empty e #:length len #:ref ref #:slice slice #:append app
                         #:width [width 1] #:limit limit #:merge-limit [merge-limit limit])
-  (chunk-sig e len ref slice app
+  (chunk-dict e len ref slice app
              (if (procedure? width) width (λ (c) (* width (len c))))
              limit merge-limit))
 
-;; The element type a signature works over, which selects the oracle's rope type.
-(define (sig->elem σ) (if (string? (chunk-sig-empty σ)) 'string 'bytes))
+;; The element type a dictionary works over, which selects the oracle's rope type.
+(define (dict->elem σ) (if (string? (chunk-dict-empty σ)) 'string 'bytes))
 
-;; A sentinel for the harness's bare `empty-rope`, resolved per signature to the matching
+;; A sentinel for the harness's bare `empty-rope`, resolved per dictionary to the matching
 ;; oracle rope. The harness binds the parameter object itself, so identity checks cover both
 ;; the object and its stored value.
 (struct dev-empty () #:transparent)
@@ -62,7 +62,7 @@
 
 (define (resolve σ x)
   (define v (if (eq? x empty-rope) (empty-rope) x))
-  (cond [(dev-empty? v) (if (eq? 'string (sig->elem σ)) empty-string-rope empty-bytes-rope)]
+  (cond [(dev-empty? v) (if (eq? 'string (dict->elem σ)) empty-string-rope empty-bytes-rope)]
         [else v]))
 
 ;; ---------------------------------------------------------------------------------------
@@ -70,10 +70,10 @@
 ;; ---------------------------------------------------------------------------------------
 
 (define (chunk->rope σ c)
-  (if (eq? 'string (sig->elem σ)) (string->rope c) (bytes->rope c)))
+  (if (eq? 'string (dict->elem σ)) (string->rope c) (bytes->rope c)))
 
 (define (rope-concat σ l r)
-  (if (eq? 'string (sig->elem σ))
+  (if (eq? 'string (dict->elem σ))
       (string-rope-append2 (resolve σ l) (resolve σ r))
       (bytes-rope-append2 (resolve σ l) (resolve σ r))))
 
@@ -81,12 +81,12 @@
 (define (rope-slice σ ρ start end)
   (define k (- end start))
   (define ρ* (resolve σ ρ))
-  (if (eq? 'string (sig->elem σ)) (string-rope-slice ρ* start k) (bytes-rope-slice ρ* start k)))
+  (if (eq? 'string (dict->elem σ)) (string-rope-slice ρ* start k) (bytes-rope-slice ρ* start k)))
 
 (define (rope-splice σ ρ start end insertion)
   (define k (- end start))
   (define ρ* (resolve σ ρ))
-  (if (eq? 'string (sig->elem σ))
+  (if (eq? 'string (dict->elem σ))
       (string-rope-splice ρ* start k (resolve σ insertion))
       (bytes-rope-splice ρ* start k (resolve σ insertion))))
 
@@ -94,14 +94,14 @@
 ;; use them against the oracle later (§1.6).
 (define (rope-split σ ρ i)
   (define ρ* (resolve σ ρ))
-  (if (eq? 'string (sig->elem σ)) (string-rope-split ρ* i) (bytes-rope-split ρ* i)))
+  (if (eq? 'string (dict->elem σ)) (string-rope-split ρ* i) (bytes-rope-split ρ* i)))
 
 (define (rope-ref σ ρ i)
   (define ρ* (resolve σ ρ))
-  (if (eq? 'string (sig->elem σ)) (string-rope-ref ρ* i) (bytes-rope-ref ρ* i)))
+  (if (eq? 'string (dict->elem σ)) (string-rope-ref ρ* i) (bytes-rope-ref ρ* i)))
 
 (define (rope-fold-chunks proc init ρ)
-  ;; No signature in this harness API; a sentinel resolves to either oracle empty rope, since
+  ;; No dictionary in this harness API; a sentinel resolves to either oracle empty rope, since
   ;; its chunk list is empty either way.
   (define ρ* (cond [(eq? ρ empty-rope) (empty-rope)]
                    [(dev-empty? ρ) empty-string-rope]

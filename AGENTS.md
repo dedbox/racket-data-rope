@@ -65,8 +65,6 @@ The top-level project directory is `racket-data-rope`, a multi-lib Racket packag
 * Use `λ` instead of `lambda`.
 * Never use unicode arrows. Always use ASCII `->`.
 * Avoid LaTeX unless a formula is impossible to represent in Unicode.
-* Read notes.org. It covers important information about the project's goals, constraints,
-  decisions, and current progress.
 * Read racket-facts.md. It contains important time-saving information on hard lessons learned.
 
 * **Language:** Racket 9.3 CS (Chez Scheme backend).

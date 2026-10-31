@@ -41,7 +41,7 @@ title: rope system from scratch: consolidated design record
 | node layout       | leaf =(len width chunk)=; node =(len width height left right)=; the measured treap variant swapped =height= for a boundary =priority= (§4; dropped, ADR-024); no annotation fields (§3.1 Q4 rejected them)             | Provisional                   | 017, 023, 024 |
 | hashing, measures | No stored hash or extra measure; content equality and hashing are chunk-wise class operations; =equal?= on ropes is =eq?=                                                 | Accepted (Q13 no, R4)     | 010 |
 | slicing           | =(slice chunk start end)=, =(rope-slice r start end)=, =(rope-splice r start end insertion)= (replace =[start, end)=)                                                         | Accepted                      | 013 |
-| dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit                                                                                            | Provisional                   | 018 |
+| dictionary        | Eight fields: empty, length, ref, slice, append, width, limit, merge-limit; pipeline text type = UTF-8 bytes chunks, token type = vector chunks (§3.3 Q18, §3.2 rows 8/21)     | Accepted (R4)               | 018 |
 | leaf merging      | =rope-concat= merges the two boundary leaves when their combined length is at most =merge-limit=; token ropes: =limit 128, merge-limit 16= (§3.2 row 21)                                          | Accepted (measured)           | 019 |
 | empty rope        | One =empty-rope= singleton; no operation builds an empty leaf; emptiness stays canonical — type distinctions never leak into the core runtime                                             | Accepted (R4)               | 020 |
 | safety            | Unsafe core behind a safe/unsafe shim; a debug build adds type tags and assertions                                                                                    | Proposed (M5, M6)             | 011 |
@@ -244,7 +244,7 @@ title: rope system from scratch: consolidated design record
 - Status :: Proposed (M5, M6)
 - Decision :: The core compiles unsafe in production through a safe/unsafe shim; tests run
   both builds. A debug build adds type tags to roots and asserts them in every operation,
-  as a safety net for =the= and casts.
+  as a safety net for =the=, casts, and — for UTF-8 byte chunks per §3.3 Q18 (R4) — slice/splice offsets landing on codepoint boundaries.
 - Rejected :: Always-on tags (cost); unsafe without a safe twin (untestable).
 ***** ADR-012 Milestones and testing
 - Status :: Proposed
@@ -298,12 +298,18 @@ title: rope system from scratch: consolidated design record
   and equal-functions (ADR-010).
 - Revisit when :: Measurements favor another layout (ADR-022). The =width= question is answered by §3.1 Q4/Q1: the field stays, no annotation fields are added, and leaf-width recomputation is bounded by =limit= (token span sums, cheaper than §4.4's text scan).
 ***** ADR-018 The chunk dictionary
-- Status :: Provisional
+- Status :: Accepted (R4): closed by §3.3 Q18 — the fields below are the shipped dictionary
+  shape. The pipeline's text type declares UTF-8 bytes chunks (=limit 2048, =merge-limit
+  512=, measured §3.2 row 8) with =width= constant 1; the token type declares vector chunks
+  (=limit 128, =merge-limit 16=, §3.2 row 21) with a span-sum procedure.
 - Decision :: A sealed record with =empty=, =length=, =ref=, =slice=, =append=, =width=, =limit=,
   =merge-limit=. =width= may be given as a constant per-element width, or — for token ropes, per §3.1 Q4 — as a procedure summing the tokens' relative spans over a chunk; token chunk-sigs require immutable token structs. M0 passes dictionaries
   explicitly.
 - Rejected :: Hiding the dictionary behind macros in M0 (the benchmark must measure
   dictionary mode directly).
+- Revisit when :: A pipeline workload needs codepoint-native indices internally —
+  architecture B of §3.3 Q18 reopens — or payload memory becomes material again
+  (documents far past §3.1 Q3 sizes).
 ***** ADR-019 Boundary-leaf merge policy
 - Status :: Accepted (measured by =benchmarks/limit-sweep.rkt=)
 - Problem :: Splits and small appends fragment leaves.
@@ -338,7 +344,9 @@ title: rope system from scratch: consolidated design record
 - Revisit when :: Nothing short of a redesign: any per-type runtime empty representation
   would break the uniqueness principle.
 ***** ADR-021 M0 scope and benchmark harness
-- Status :: Provisional
+- Status :: Accepted (R4): confirmed by you. M0's scope shipped; the harness delivered, was
+  strengthened (1024 windows so clean p99.9 is genuine), re-run, and re-sized per §3.1 Q3;
+  the token revisit ran to its decision (§3.2 row 21).
 - Decision :: M0 has no macros, typing, classes, cursors or hashing. The harness measures:
   single-character typing sessions; random 4-for-4 edits at 100 K to 10 M elements (100 M
   optional); random and sequential access in dictionary mode, with the chunk accessor
@@ -350,6 +358,8 @@ title: rope system from scratch: consolidated design record
   50 K / 100–500 K; the earlier 100 K–10 M runs stand as historical stress baselines.
 - Rejected :: Whole-operation timing only (hides tails); comparing only against new
   variants (no baseline).
+- Revisit when :: Q6 closes when M3's inline mode lets the dictionary gate be measured
+  against =#:inline=; re-ladder the scenarios if §3.1 Q3 sizes change.
 ***** ADR-022 Wide-node tree experiment (M0b)
 - Status :: Proposed experiment; the protocol below is Proposed; no decision yet
 - Problem :: A binary tree over 100 M elements is about 18 or more levels deep, and each
@@ -493,7 +503,7 @@ Phase 5 writes one of:
 | 1 | Answered (R4): keep — the token ropes' span measure (§3.1 Q4) requires it; cost is one word per leaf and per node plus one addition per join step, with leaf-width recomputation bounded by =limit=.                                                               | ADR-017           |
 | 2 | Answered: the current repository — new modules live next to =core.rkt= (=treap-core.rkt= was measured §4 and dropped ADR-024; =wide.rkt= follows the ADR-022 protocol).                                                       | M0 layout         |
 | 3 | Answered (R4): typical documents are 100–1000 LOC (~1–10 kilochars); occasionally 2000–5000 LOC (~20–50 kilochars); C++/JS/TS targets can run larger but rarely beyond a few hundred kilochars. Primary targets Racket > OCaml > Hazel sit at the low end. Lexical tokens are ~5–10 characters, not ~20, so typical token ropes hold ~100–1500 tokens. Benchmark ladder re-based: 1 K / 10 K typical, 20–50 K large, 100–500 K stress. | ADR-021           |
-| 4 | Answered (R4): yes — token ropes are vector chunks of immutable token structs carrying their own relative spans, and =width= comes from a chunk procedure summing those spans. No per-node annotations: semantic editor services (rename-all-occurrences, describe top-level signatures, enclosing-decl at cursor) run on side indexes maintained outside the rope — occurrence lists and sorted decl-span arrays updated incrementally by re-lexing dirty regions, positions stored relative to stable anchors; annotations would worsen descent locality and repair measures on the edit path, so they are rejected.       | ADR-010, 017, 022 |
+| 4 | Answered (R4): yes — token ropes are vector chunks of immutable token structs carrying their own relative spans, and =width= comes from a chunk procedure summing those spans. No per-node annotations: semantic editor services (rename-all-occurrences, describe top-level signatures, enclosing-decl at cursor) run on side indexes maintained outside the rope — occurrence lists and sorted decl-span arrays updated incrementally by re-lexing dirty regions, positions stored relative to stable anchors; annotations would worsen descent locality and repair measures on the edit path, so they are rejected; per §3.3 Q18 (R4) the span units are bytes.       | ADR-010, 017, 022 |
 | 5 | Answered by the ADR-022 protocol: run Phase 0 first; implement =wide.rkt= only if the depth gate fires.                                                                                   | ADR-022           |
 **** 3.2 To be settled by data
 |  # | Question                                                       | Gate                                                                       |  ADR |
@@ -504,7 +514,7 @@ Phase 5 writes one of:
 |  9 | Is tree depth the limiting factor for random access? (§4.3 supports depth: the treap's sampled tree is 2× deeper — height 47 against AVL's 21 at 100 MB — and its cursor-ref p50 ratio grows with size.) | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
 | 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
 | 11 | Matched-size comparison done at 100 K string elements via =benchmarks/dev-sweep.sh= (dev extracted to /tmp, resolved with =racket -U -X overlay -S collects=; adapter shim presents the dev API under harness names). Dev runs its fixed 512/512 limit and balances on every edit path, so its config corresponds to the core's =merge-limit = limit= row. At the dev-equivalent core config (=string/512/512=): typing p50 944 ns / clean p99 1832 ns against dev 7800 / 11102 ns (8.2x / 6.1x); randref p50 67 ns / clean p99 173 ns against dev 85 / 270 ns (1.27x / 1.56x). Core's best rows are typing 971 / 1559 ns (=1024/1024=) and randref 36 / 92 ns (=4096/4096=) | Met (R4): genuine clean p99.9 at 1024 windows/scenario, two runs. typing clean p99.9 2.4–6.0 µs / max 7.2–9.5 µs (512/512); 3.2–3.5 / 3.3–4.6 µs (1024/1024); 4.9–5.8 / 5.7–11.1 µs (4096/4096). edit clean p99.9 3.4–3.8 µs / max 4.5–4.7 µs (512/512); 4.0–4.6 µs (1024/1024); 9.1–10.9 / 11.1–12.0 µs (4096/4096). Tails scale with the =limit= copy bound per invariant 4 — no rebalancing pauses; ≤8/1024 windows straddled a collection. Caveats: at n=1024 the p99.9 index sits on the 3rd-largest window, so clean p99.9/max vary ~2–2.5× run-to-run; mutating scenarios grow the rope past nominal size across 1024 windows |  009 |
-| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes; note the pins predate the R4 sampling change (20 -> 1024 windows/scenario) — under the strengthened harness mutating scenarios grow the rope past nominal size and p50s read higher, so re-pin under the current harness before gating M1/M3 | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
+| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes; note the pins predate the R4 sampling change (20 -> 1024 windows/scenario) — under the strengthened harness mutating scenarios grow the rope past nominal size and p50s read higher, so re-pin under the current harness, on the bytes-shape configs (2048/512, typing 363/596 ns measured) per §3.3 Q18 architecture A, before gating M1/M3 | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
 | 21 | Settled (R4): token ropes take =limit 128, merge-limit 16 (=limit/8) — the balanced frontier at the §3.1 Q3 ladder (140 / 1400 / 7000 / 30000 / 70000 tokens): edit ~1.38× and read ~1.46× their respective bests. ADR-019's strict criterion (read within a few percent of best) is unreachable for token chunks: edit-best 32/4 costs +47–154% on reads, read-best 512/64 costs +89% on edits; =merge-limit = limit= (the old unmeasured =vector-sig= default) is the worst edit tail at every size (13.5 µs vs 2.4 µs clean p99 at 70 K tokens). Alternatives, cheap to ship as distinct types via ADR-004 =#:like=: 64/8 edit-first (leaf copy ≈ string-sig's 512/64 analogue), 256/32 read-first. Retained ≈ 40.6 B/token (8 B slot + ~32 B struct + <1 B tree); tree height ≤ 5 at pipeline sizes. | rerun of =benchmarks/limit-sweep.rkt elem=token= at 1024 windows; smoke reproduces 128/16 at 1400 tokens: tappend p50 709 / clean-p99 873 ns, tpatch 787/1548, tslice 59/109, trandref 21/23 |  019 |
 **** 3.3 Not yet decided or discussed
 |  # | Question                                                                                                                                                                                                    |  Affects |
@@ -513,8 +523,8 @@ Phase 5 writes one of:
 | 14 | Do the class conventions decided for the existing implementation (explicit instance headers, operations generated from fields with =#:private= and =#:op=, =#:realize= patterns) carry over to ADR-008 unchanged? |      008 |
 | 15 | Can typed bindings act as sequence expanders, so that =(for ([c doc]) …)= is specialized?                                                                                                                     |      007 |
 | 16 | What is the exact inference grammar of T2 (which forms propagate types), and how are user macros that produce ropes handled?                                                                                |      003 |
-| 17 | What replaces the current =rope-offset-index= (width-to-index search) and cursors in the new core? Both are deferred to M1.                                                                                   | 009, 017 |
-| 18 | Should string chunks stay Racket strings (4 bytes per character) or use UTF-8 bytes with different indexing? Raised implicitly by the memory benchmark; not yet discussed.                                  |      018 |
+| 17 | Answered (R4): per §3.3 Q18's byte anchoring, offset<->index degenerates trivially — byte positions ARE element indices, so the core ships no width-to-index search; codepoint mapping lives at the UI boundary as bounded scans. Cursors remain deferred to M1 as conveniences over the spine descent.                                                                                   | 009, 017 |
+| 18 | Answered (R4): architecture A — text rope chunks are UTF-8 bytes; byte positions ARE element indices inside the pipeline. Cursor, token-span and service-anchor positions are byte-anchored; codepoint<->byte conversion happens only at UI display/report boundaries via bounded scans near the region of interest. Memory is moot at §3.1 Q3 sizes (~400 KB vs ~100 KB payloads), so the axis is latency: bytes copies and lexing measure cheaper (typing 363 vs 536 ns p50) and stay so only while width stays constant — a codepoint-count leaf width reintroduces the §4.4 scan tax and erases the win (rejected middle). Byte slices must land on codepoint boundaries; pipeline discipline keeps it safe and the debug build (ADR-011, M5) asserts it.                                  |      018, 017 |
 | 19 | Is a per-leaf summary (for example a line count in the chunk) or a wide-node layout the preferred base for a future line-aware rope? The ADR-022 protocol decides it at Phase 5.                                                                        |      022 |
 | 20 | Does the =#:specialize= memo table (module-level lift with encapsulated compile-time mutation) meet the cleanliness bar?                                                                                      |      005 |
 

@@ -10,7 +10,7 @@
 ;;; common element type, plus the conversion helpers that turn a rope into contiguous
 ;;; Racket data and back again.
 ;;;
-;;; Where it sits in the system (see notes.org):
+;;; Where it sits in the system (see M0-notes.org):
 ;;;
 ;;;   core     the tree and its algorithms                                -- data/rope/core.rkt
 ;;;   dicts    chunk dictionaries implementing the algebras               -- this module
@@ -53,9 +53,11 @@
 ;; runs the editor pipeline (load, typing, 4-for-4 patches, deletion, paste, lexer slices and
 ;; chunk scans, random and sequential access, flatten) over 1 MB, 10 MB, and 100 MB buffers and
 ;; reports percentiles with samples that straddled a garbage collection counted separately.
-;; The chosen values for string-dict and bytes-dict are the configuration whose clean tail -- the
-;; p99 over samples that did not overlap a collection -- is the smallest on the edit path while
-;; the read path stays within a few percent of its best. They are tunables, not invariants, and
+;; All three dictionaries follow one rule, `merge-limit` = `limit`/8. The chosen configuration is
+;; the one whose clean tail -- the p99 over samples that did not overlap a collection -- is the
+;; smallest on the edit path; the read path then costs about 11% more than the best configuration
+;; at 100 K elements and about 25% more at 10 MB on the bytes shape, which the edit-dominated
+;; pipeline accepts. They are tunables, not invariants, and
 ;; `merge-limit` must stay <= `limit`: a merged boundary leaf is bounded by `merge-limit`, and a
 ;; leaf is bounded by `limit`.
 ;;
@@ -70,10 +72,13 @@
 ;; Measured on a 10 MB buffer (nanoseconds, p50 / clean p99): string-dict typing is 536/822 at
 ;; 512/64 against 1251/2317 at 512/512 -- merging less is the biggest latency win in this file.
 ;; Its read path then costs about 10% more than the best configuration: random access 203 ns
-;; against 165 ns at 1024/128. bytes-dict at 2048/512 types at 363/596, patches at 1080/1258,
-;; deletes at 806/954, pastes at 910/1042 -- all better than the same shapes with
-;; merge-limit == limit (681/893 typing, 1305/8670 patches). Byte chunks copy cheaper than
-;; string chunks, so bytes-dict's best `limit` is larger than string-dict's.
+;; against 165 ns at 1024/128. Those two string figures come from the older 20-window harness.
+;; The 2026-10-31 rerun at 1024 windows measured the bytes shape six times, medians: typing
+;; 486/928 at 100 K elements and 399/1008 at 10 MB for 2048/256, against 483/1332 and 396/1036
+;; for 2048/512; patches, deletes and pastes land within each other's tail noise; random access
+;; reads at 24/41 and 88/163. Merging up to `limit` is the worst shape on the edit tail at the
+;; large size -- 6.9-8.5 µs clean p99 for patches, deletes and pastes at 10 MB. Byte chunks copy
+;; cheaper than string chunks, so bytes-dict's best `limit` is larger than string-dict's.
 ;; Retained size is payload-dominated: a rope costs about 1.04 bytes per element as bytes and
 ;; about 4.16 as string characters, of which the tree adds less than 0.2 bytes per element.
 
@@ -81,9 +86,14 @@
                                    #:slice substring #:append string-append
                                    #:width 1 #:limit 512 #:merge-limit 64))
 
+;; bytes-dict follows the same limit/8 rule: 256 of 2048. The first sweep chose limit/4 (512),
+;; but a six-run rerun on the bytes shape under the 1024-window harness measured limit/8 with the
+;; smaller edit tail at both matched sizes -- 928 ns against 1332 ns clean p99 typing at 100 K,
+;; and 1008 ns against 1036 ns at 10 MB -- while reads came out equal at 100 K and 2 ns slower at
+;; 10 MB. See M0-notes §3.2 rows 8 and 12.
 (define bytes-dict (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
                                   #:slice subbytes #:append bytes-append
-                                  #:width 1 #:limit 2048 #:merge-limit 512))
+                                  #:width 1 #:limit 2048 #:merge-limit 256))
 
 ;; vector-dict uses the token frontier measured by benchmarks/limit-sweep.rkt (M0-notes §3.2
 ;; row 21): limit 128 with merge-limit 16, which is limit/8 -- the same rule the two pipeline

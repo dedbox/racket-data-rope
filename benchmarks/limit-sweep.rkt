@@ -1,16 +1,20 @@
 #lang racket/base
 
 ;;; benchmarks/limit-sweep.rkt -- the measurement that decides string-dict's and bytes-dict's
-;;; #:limit and #:merge-limit (ADR-019, notes.org §3.2 Q8 and Q11), and now the token vector-dict's
+;;; #:limit and #:merge-limit (ADR-019, M0-notes.org §3.2 rows 8 and 11), and now the token vector-dict's
 ;;; limits too (ADR-019's token revisit clause).
 ;;;
 ;;; The winner, recorded here so a rerun can be compared against it: string-dict 512/64 (limit
-;;; 512, merge-limit 64) and bytes-dict 2048/512. Both declare a merge-limit well below the limit,
-;;; which is what makes typing and patching cheap; the read path pays roughly 10% over its best.
-;;; vector-dict keeps the default merge-limit == limit because nothing measures it -- that gap is
-;;; what elem=token below closes (notes.org §3.1 Q4: token ropes are vector chunks of immutable
-;;; token structs carrying their own relative spans; the token-dict is built in limit-harness.rkt,
-;;; NOT in data/rope, because the pipeline type ships later).
+;;; 512, merge-limit 64) and bytes-dict 2048/256. The bytes merge-limit moved from limit/4 to
+;;; limit/8 on the six-run rerun of 2026-10-31 at 1024 windows, which measured the smaller edit
+;;; tail at both matched sizes (M0-notes.org §3.2 rows 8 and 12). All three dictionaries declare
+;;; a merge-limit well below the limit, which is what makes typing and patching cheap; the read
+;;; path pays about 11% over its best at 100 K elements and about 25% at 10 MB. vector-dict now
+;;; declares the token frontier measured by elem=token below (128/16), so no shipped dictionary
+;;; relies on the default merge-limit == limit. The token shape stays benchmarked here rather
+;;; than shipped in data/rope, because the pipeline type comes later (M0-notes.org §3.1 Q4: token
+;;; ropes are vector chunks of immutable token structs carrying their own relative spans, and the
+;;; token-dict is built in limit-harness.rkt).
 ;;;
 ;;; The workload is a programming editor's incremental parser pipeline: a buffer is loaded,
 ;;; edited by typing and by 4-for-4 patches, and read back by the lexer -- per-token slices,
@@ -110,7 +114,7 @@
   ρ)
 
 ;; ---------------------------------------------------------------------------------------
-;; Token-pipeline operations (notes.org §3.1 Q4: vector chunks of token structs)
+;; Token-pipeline operations (M0-notes.org §3.1 Q4: vector chunks of token structs)
 ;; ---------------------------------------------------------------------------------------
 
 ;; Typing at the token level: replace one token at a pseudo-random position. Replacement --
@@ -328,7 +332,7 @@
 
 ;; A merge-limit expression: "limit" means merge-limit = limit, "limit/2" means limit/2, and a
 ;; literal number stands on its own. Never above the leaf limit, which would break the leaf
-;; invariant (notes.org §1.3, invariant 1).
+;; invariant (M0-notes.org §1.3, invariant 1).
 (define (merge-of expr limit)
   (cond [(string=? expr "limit") limit]
         [(string=? expr "limit/2") (quotient limit 2)]

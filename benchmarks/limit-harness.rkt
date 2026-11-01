@@ -30,7 +30,7 @@
 ;; ---------------------------------------------------------------------------------------
 
 ;; ---------------------------------------------------------------------------------------
-;; Token elements (notes.org §3.1 Q4, ADR-019's token revisit)
+;; Token elements (M0-notes.org §3.1 Q4, ADR-019's token revisit)
 ;; ---------------------------------------------------------------------------------------
 ;;
 ;; Token ropes are vector chunks of immutable token structs, each carrying its own relative

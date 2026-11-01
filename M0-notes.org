@@ -79,7 +79,7 @@
 **** 1.5 Milestones
 | Milestone | Contents                                                                                          | Status                      |
 |-----------+---------------------------------------------------------------------------------------------------+-----------------------------|
-| M0        | erased core, explicit dictionaries, property tests, benchmark harness against the current library | code delivered; sweep run; tree-family comparison §4 settled; treap dropped (ADR-024); first dev-vs-core baseline recorded (§3.2 row 11); suite green and setup clean (2026-10-31); close-out ADR-025 proposed, re-pin pending (§3.2 row 12) |
+| M0        | erased core, explicit dictionaries, property tests, benchmark harness against the current library | code delivered; sweep run; tree-family comparison §4 settled; treap dropped (ADR-024); first dev-vs-core baseline recorded (§3.2 row 11); suite green and setup clean (2026-10-31); closed by ADR-025 (2026-11-01), ceilings re-pinned on the bytes shape (§3.2 row 12) |
 | M0b       | wide-node tree behind the same API; comparison with M0                                            | protocol Proposed (ADR-022)           |
 | M1        | =define-rope-type=, standard-op table, explicit type arguments, string and bytes types              | planned                     |
 | M2        | typing layer (T2)                                                                                 | planned                     |
@@ -96,7 +96,10 @@
   garbage collection, and compare against the current library. Gates are set after a
   baseline run: no regression in the median, improvement in the p99. The baseline run is
   done (§3.2 rows 11-12), so the gates are now the pinned ceilings of §3.2 row 12, with
-  tolerance bands of ±10% on p50 and ±15% on clean p99. Window scenarios now sample 1024
+  tolerance bands of ±10% on p50 and ±15% on clean p99, compared against the median of at least
+  three runs -- a single run's clean p99 spreads 821–1274 ns on the bytes typing scenario at
+  100 K and 873–1262 ns at 10 MB, so a lone run would flag a false regression about one time in
+  three. Window scenarios now sample 1024
   windows (R4): below ~1000 samples the percentile index clamps to the last sample, so
   p99.9 is genuine only at the strengthened sampling — it collapsed into max at 20 windows.
 
@@ -318,15 +321,18 @@
   right rope when their combined length is at most =merge-limit=: replace the last leaf (one
   path copy) and drop the first (a rebalancing join). The field is declared independently of
   =limit=, and must stay <= =limit= so a merged leaf remains a leaf the invariant accepts.
-  The measured values declare =merge-limit= = =limit/8= for =string-dict= (64 of 512)
-  and =merge-limit= = =limit/4= for =bytes-dict= (512 of 2048); =vector-dict= carried the
-  unmeasured default =merge-limit= = =limit= until the R4 token sweep rejected it (§3.2 row 21 —
-  worst edit tail at every size); token ropes declare =limit 128= and =merge-limit 16=, and
-  =vector-dict= now declares
-  =merge-limit 16= (=limit/8=, recorded by ADR-025).
+  The measured values declare =merge-limit= = =limit/8= on all three dictionaries:
+  =string-dict= (64 of 512), =bytes-dict= (256 of 2048) and =vector-dict= (16 of 128). bytes-dict
+  was declared at =limit/4= by the first sweep and moved to =limit/8= on the 2026-10-31 rerun
+  (§3.2 row 8), which measured the smaller edit tail at both matched sizes with reads equal at
+  100 K and 2 ns slower at 10 MB. =vector-dict= carried the unmeasured default
+  =merge-limit= = =limit= until the R4 token sweep rejected it (§3.2 row 21 — worst edit tail at
+  every size); token ropes declare =limit 128= and =merge-limit 16=, and =vector-dict= now
+  declares =merge-limit 16= (=limit/8=, recorded by ADR-025).
 - Rejected :: Never merging (fragmentation); always rebuilding (ADR-009); merging up to
   =limit=, which is the slowest shape on the edit path (typing 1251 ns p50 against 536 ns at
-  512/64 on a 10 MB buffer, and the clean p99 2317 ns against 822 ns).
+  512/64 on a 10 MB buffer, and the clean p99 2317 ns against 822 ns; those figures predate the
+  1024-window harness, whose rerun is §3.2 row 8).
 - Revisit when :: Settled for token ropes by the R4 sweep (§3.2 row 21): =limit 128= and
   =merge-limit 16= balance edit (~1.38× best) and read (~1.46× best); the strict few-percent
   criterion is unreachable for token chunks. Reopen when a measured pipeline workload makes
@@ -503,26 +509,30 @@ Phase 5 writes one of:
   cursor-typing win (§4.3) and worst-case bounds stop being required.
 
 ***** ADR-025 M0 close-out
-- Status :: Proposed, gated -- not signed off until condition (b) runs
+- Status :: Accepted (measured 2026-10-31, signed off 2026-11-01): conditions (a), (b) and (d) hold,
+  and condition (c) turned out not to belong to M0.
 - Problem :: M0's deliverables are complete, but no record closed them, and one measurement
-  gate is still open: §3.2 row 12 pinned its ceilings under the pre-1024-window harness and on
+  gate was open when this was drafted: §3.2 row 12 pinned its ceilings under the pre-1024-window harness and on
   string shapes, while the pipeline's text type is the bytes shape (§3.3 Q18).
 - Decision :: Close M0 on four conditions. (a) Suite and build green -- verified 2026-10-31:
   =raco test tests/= passes 114 tests (66 in =core-tests.rkt=, 48 in =dicts-tests.rkt=), and both
   =raco setup --no-info-domain --no-docs --pkgs data-rope= and =raco setup --pkgs data-rope=
-  finish without errors. (b) Re-pin §3.2 row 12 on the bytes configs (2048/512) under the current
-  harness; this gates M1 and M3. (c) Settle the three decisions recorded in =M1-notes.org= §13
-  rows 7-9: contract policy, chunk ownership, whether a token type ships. (d) Terminology drift
+  finish without errors. (b) Re-pin §3.2 row 12 on the bytes shape under the current harness -- done 2026-10-31,
+  six runs at =bytes/2048/256=; those ceilings gate M1 and M3. (c) The three decisions recorded in =M1-notes.org= §13 rows 7-9 --
+  contract policy, chunk ownership, whether a token type ships -- are M1's own choices, not M0 exit
+  criteria: they stay open there and do not gate this close-out. (d) Terminology drift
   fixed: =sig= -> =dict= throughout this file (ADR-001, ADR-018, ADR-019, §3.2 rows 8 and 21, §4's
   intro), and the struct fields =len= -> =length= (§1.2, §1.3, ADR-017) match =core.rkt=.
 - Rejected :: Reopening M0 to write more code (no exit criterion needs it); signing off before
   condition (b) (the regression gates would be unverifiable); leaving =vector-dict= at the
   unmeasured default where =merge-limit= = =limit= (the worst edit tail, §3.2 row 21).
-- Consequences :: =vector-dict= declares =#:merge-limit 16= (=limit/8=, ADR-019's rule); the stray
+- Consequences :: All three dictionaries declare =#:merge-limit= at =limit/8=: =bytes-dict= moved
+  to 256 of 2048 on the rerun (§3.2 row 8), =vector-dict= declares 16 of 128; the stray
   =lambda= in =rope-chunks= became =λ=, so =AGENTS.md= holds on all shipped code; =data/rope.rkt=
   stays an empty collector until M1 fills it (§1.5 M1); §3.3 gains Q21, the pipeline's CST/AST
   question.
-- Revisit when :: condition (b) completes, or the tree or chunk layout changes (§3.2 row 12).
+- Revisit when :: the tree or chunk layout changes (§3.2 row 12), or an M1 gate reads a tail the
+  pinned bands cannot support at three runs.
 
 *** 3. Open questions
 **** 3.1 Needed to proceed
@@ -538,11 +548,11 @@ Phase 5 writes one of:
 |----+----------------------------------------------------------------+----------------------------------------------------------------------------+------|
 |  6 | Is dictionary mode acceptable on =rope-ref= and similar paths?   | within 10% of inline on random access; else inline the leaf case           |  005 |
 |  7 | Settled: yes — the AVL join keeps every invariant on a leaf-oriented tree; the treap variant held heap order too before ADR-024 dropped it. | =raco test tests/core-tests.rkt= ships on =core=; the 140-test §4.1 run happened once, its treap suites live on the archived branch |  016, 024 |
-|  8 | Settled: =merge-limit= = =limit/8= on =string-dict= (64/512), limit/4 on =bytes-dict= (512/2048), =limit/8= on =vector-dict= (16/128). | typing p50 536 ns and clean p99 822 ns on a 10 MB buffer, against 1251/2317 ns at =merge-limit= = =limit=; the read path pays about 10% more than the best configuration (random access 203 ns against 165 ns at limit 1024) |  019 |
+|  8 | Settled (re-measured 2026-10-31): =merge-limit= = =limit/8= on all three dictionaries -- =string-dict= 64/512, =bytes-dict= 256/2048, =vector-dict= 16/128; bytes-dict moved off the first sweep's =limit/4= (512 of 2048). | typing on the bytes shape, median of six runs at 1024 windows: p50 486 ns / clean p99 928 ns at 100 K elements and 399 ns / 1008 ns at 10 MB, against 483/1332 and 396/1036 at =bytes/2048/512=. Patches, deletes and pastes land within each other's tail noise; merging up to =limit= costs 6.9–8.5 µs clean p99 on those shapes at 10 MB. Reads cost ~11% over the best configuration at 100 K (24.5 ns against 22 ns) and ~25% at 10 MB (85.5 ns against 68.5 ns). The older string-shape figures (536/822 at 512/64 against 1251/2317 at 512/512, reads 203 against 165 ns) predate the strengthened harness. |  019 |
 |  9 | Is tree depth the limiting factor for random access? (§4.3 supports depth: the treap's sampled tree is 2× deeper — height 47 against AVL's 21 at 100 MB — and its cursor-ref p50 ratio grows with size.) | ADR-022 protocol Phase 0: =randref= against =seqref= p50 by size, 100 K to 1000 M; cache-miss counts from =perf stat= |  022 |
 | 10 | Met: erasure reaches 4.156 bytes per element for a string rope (chunk payload 4 bytes + 32-byte leaf + 48-byte node), 1.039 for a bytes rope | analytic table in =benchmarks/limit-sweep.rkt=, cross-checked with /proc/self/status deltas over 4M structs |  002 |
 | 11 | Matched-size comparison done at 100 K string elements via =benchmarks/dev-sweep.sh= (dev extracted to /tmp, resolved with =racket -U -X overlay -S collects=; adapter shim presents the dev API under harness names). Dev runs its fixed 512/512 limit and balances on every edit path, so its config corresponds to the core's =merge-limit= = =limit= row. At the dev-equivalent core config (=string/512/512=): typing p50 944 ns / clean p99 1832 ns against dev 7800 / 11102 ns (8.2x / 6.1x); randref p50 67 ns / clean p99 173 ns against dev 85 / 270 ns (1.27x / 1.56x). Core's best rows are typing 971 / 1559 ns (=1024/1024=) and randref 36 / 92 ns (=4096/4096=) | Met (R4): genuine clean p99.9 at 1024 windows/scenario, two runs. typing clean p99.9 2.4–6.0 µs / max 7.2–9.5 µs (512/512); 3.2–3.5 / 3.3–4.6 µs (1024/1024); 4.9–5.8 / 5.7–11.1 µs (4096/4096). edit clean p99.9 3.4–3.8 µs / max 4.5–4.7 µs (512/512); 4.0–4.6 µs (1024/1024); 9.1–10.9 / 11.1–12.0 µs (4096/4096). Tails scale with the =limit= copy bound per invariant 4 — no rebalancing pauses; ≤8/1024 windows straddled a collection. Caveats: at ~n=1024~ the p99.9 index sits on the 3rd-largest window, so clean p99.9/max vary ~2–2.5× run-to-run; mutating scenarios grow the rope past nominal size across 1024 windows |  009 |
-| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Pinned from runs on this machine: 100 K string -- typing p50 971 ns / clean p99 1559 ns (=string/1024/1024=) -> ceilings 1068 / 1795 ns; randref p50 36 ns / clean p99 92 ns (=string/4096/4096=) -> ceilings 40 / 106 ns. 10 M string -- typing p50 1218 ns / clean p99 1457 ns (=string/512/512=) -> ceilings 1340 / 1675 ns; randref p50 166 ns / clean p99 203 ns (=string/2048/2048=) -> ceilings 183 / 233 ns. Re-measure and re-pin when the tree or chunk layout changes; note the pins predate the R4 sampling change (20 -> 1024 windows/scenario) — under the strengthened harness mutating scenarios grow the rope past nominal size and p50s read higher, so re-pin under the current harness, on the bytes-shape configs (2048/512, typing 363/596 ns measured) per §3.3 Q18 architecture A, before gating M1/M3 | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
+| 12 | Settled (option 1): the core's own measured percentiles at matched sizes become the budgets, with tolerance bands of ±10% on p50 and ±15% on clean p99. Re-pinned 2026-10-31 from six runs of =benchmarks/limit-sweep.rkt= at the current 1024-window harness, on the bytes shape -- the pipeline's text type (§3.3 Q18 architecture A) -- at config =bytes/2048/256=. 100 K: typing p50 486 ns / clean p99 927.5 ns -> ceilings 535 / 1067 ns; randref p50 24 ns / clean p99 40.5 ns -> ceilings 26 / 47 ns. 10 M: typing p50 398.5 ns / clean p99 1007.5 ns -> ceilings 438 / 1159 ns; randref p50 87.5 ns / clean p99 163 ns -> ceilings 96 / 187 ns. Shape over the six runs: 49 leaves at height 6 at 100 K, 4883 leaves at height 13 at 10 M, ~1.04 B/element retained. The earlier string-shape pins (=string/1024/1024=, =string/4096/4096=, =string/512/512=, =string/2048/2048=) are superseded: the bytes shape edits ~3x cheaper and reads ~2x cheaper at the same size. Two caveats. The clean-p99 band is wide at matched sizes (typing spread 821–1274 ns at 100 K and 873–1262 ns at 10 M, randref 37–50 ns at 100 K), so a gate reads the median of at least three runs: the confirming single-run smoke came in 103 ns over the 10 M typing ceiling and 3 ns over the randref ceiling at 100 K, while every p50 stayed inside its band. Windowed mutating scenarios grow the rope past nominal size (32768 operations per scenario), so a comparison must use the same harness. Re-measure and re-pin when the tree or chunk layout changes. | regression gates for M1/M3 against the pinned ceilings                  | §1.6 |
 | 21 | Settled (R4): token ropes take =limit 128= and =merge-limit 16= (=limit/8=) — the balanced frontier at the §3.1 Q3 ladder (140 / 1400 / 7000 / 30000 / 70000 tokens): edit ~1.38× and read ~1.46× their respective bests. ADR-019's strict criterion (read within a few percent of best) is unreachable for token chunks: edit-best 32/4 costs +47–154% on reads, read-best 512/64 costs +89% on edits; =merge-limit= = =limit= (the old unmeasured =vector-dict= default, now corrected to 16) is the worst edit tail at every size (13.5 µs vs 2.4 µs clean p99 at 70 K tokens). Alternatives, cheap to ship as distinct types via ADR-004 =#:like=: 64/8 edit-first (leaf copy ≈ string-dict's 512/64 analogue), 256/32 read-first. Retained ≈ 40.6 B/token (8 B slot + ~32 B struct + <1 B tree); tree height ≤ 5 at pipeline sizes. | rerun of ~benchmarks/limit-sweep.rkt elem=token~ at 1024 windows; smoke reproduces 128/16 at 1400 tokens: tappend p50 709 / clean-p99 873 ns, tpatch 787/1548, tslice 59/109, trandref 21/23 |  019 |
 **** 3.3 Not yet decided or discussed
 |  # | Question                                                                                                                                                                                                    |  Affects |

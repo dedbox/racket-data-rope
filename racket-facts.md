@@ -126,7 +126,8 @@ suite is ~114 tests and prints per-file summary lines; docs setup also writes ma
 - Shape reference points: 10M chars @ limit 512 → 19532 leaves, height 15; 100M bytes @ limit 2048
   → 48829 leaves, height 16.
 
-Latency reference (ns, 10 MB buffer, p50 / clean p99 — the values this session settled on):
+Latency reference (ns, 10 MB buffer, p50 / clean p99 — a 20-window run; the bytes shape was
+re-measured in 2026-10-31 below, which reports higher p50 and tails on the mutating scenarios):
 
 | scenario | string 512/64 | string 512/512 | bytes 2048/512 | bytes 2048/2048 |
 |---|---|---|---|---|
@@ -141,10 +142,20 @@ Latency reference (ns, 10 MB buffer, p50 / clean p99 — the values this session
 | flatten whole buffer | ~27 ms (insensitive) | — | ~6 ms (insensitive) | — |
 | load 10 MB | ~216 ms (insensitive) | — | ~272 ms (insensitive) | — |
 
+Re-measured 2026-10-31 at 1024 windows/scenario, six runs of the bytes shape (medians, ns,
+p50 / clean p99): typing `486/928` at 100 K elements and `399/1008` at 10 MB for `bytes/2048/256`,
+against `483/1332` and `396/1036` for `bytes/2048/512`; random `rope-ref` 24 at 100 K and 88 at
+10 MB (clean p99 41 and 163); token slice ~21 ns at either size. Patches, deletes and pastes land
+within each other's tail noise, while merging up to `limit` costs 6.9–8.5 µs clean p99 on those
+shapes at 10 MB. Shape over the runs: 49 leaves at height 6 (100 K), 4883 leaves at height 13
+(10 MB), ~1.04 B/element retained. Gates compare the median of at least three runs, since a
+single run's clean p99 spread 873–1262 ns on that typing scenario.
+
 Trends that matter for future decisions: typing latency grows ~linearly with `limit` (256 → 1054 ns
 p50, 1024 → 1642, 16384 → 14494); `randref` improves with `limit` (221 → 124 ns); string `scan`
 favors smaller `limit`, bytes `scan` favors larger; `merge-limit` below `limit` roughly halves
-typing latency and lowers the clean tail; `flat`/`load` are insensitive to both knobs.
+typing latency and lowers the clean tail; `flat`/`load` are insensitive to both knobs. All three
+shipped dictionaries now declare `merge-limit` = `limit`/8 (`M0-notes.org` §3.2 row 8).
 A bytes rope costs ~1.04 bytes/elem vs ~4.16 for a string rope, and byte edits are cheaper —
 relevant to `M0-notes.org` §3.3 Q18 (string chunks vs UTF-8 byte chunks).
 

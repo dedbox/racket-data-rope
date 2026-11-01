@@ -59,7 +59,7 @@
   (define limits (list 512 2048 128))
   ;; The merge-limits the module declares. They are what merging tests read: a merge is allowed
   ;; when the two boundary chunks together weigh at most `merge-limit`.
-  (define merge-limits (list 64 512 16))
+  (define merge-limits (list 64 256 16))
 
   ;; The source chunk for n elements, per dict.
   (define (src σ n)
@@ -144,14 +144,14 @@
         (check-equal? (chunk-dict-limit string-dict) 512)
         (check-equal? (chunk-dict-merge-limit string-dict) 64)
         (check-equal? (chunk-dict-limit bytes-dict) 2048)
-        (check-equal? (chunk-dict-merge-limit bytes-dict) 512)
+        (check-equal? (chunk-dict-merge-limit bytes-dict) 256)
         (check-equal? (chunk-dict-limit vector-dict) 128)
         (check-equal? (chunk-dict-merge-limit vector-dict) 16))
       (test-case "a merge-limit is never larger than its limit, which bounds leaves"
         ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so the
         ;; leaf invariant `rope-valid?` checks holds only while merge-limit <= limit. Every
         ;; shipped dict declares a merge-limit below its limit; only the default fill makes the
-        ;; two equal.
+        ;; two equal. All three follow the measured limit/8 rule (M0-notes §3.2 row 8).
         (for ([σ (in-list dicts)] [limit (in-list limits)] [merge-limit (in-list merge-limits)])
           (check-equal? (chunk-dict-merge-limit σ) merge-limit)
           (check-true (<= (chunk-dict-merge-limit σ) (chunk-dict-limit σ))
@@ -159,7 +159,7 @@
         (check-equal? (chunk-dict-merge-limit string-dict)
                     (/ (chunk-dict-limit string-dict) 8))
         (check-equal? (chunk-dict-merge-limit bytes-dict)
-                    (/ (chunk-dict-limit bytes-dict) 4))
+                    (/ (chunk-dict-limit bytes-dict) 8))
         (check-equal? (chunk-dict-merge-limit vector-dict)
                     (/ (chunk-dict-limit vector-dict) 8)))
       (test-case "merge-limit defaults to limit when it is not declared"

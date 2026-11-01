@@ -29,7 +29,7 @@
 ;;;      Everything else -- balance, navigation, iteration, structural sharing -- is
 ;;;      identical for every type and compiled once.
 ;;;
-;;; In the project's design (see notes.org) this is the "core" layer. The type layer
+;;; In the project's design (see M0-notes.org) this is the "core" layer. The type layer
 ;;; (`define-rope-type`) turns a chunk-dict into a runtime constant plus a compile-time index;
 ;;; the operations and classes layers sit on top. Nothing here depends on either, so this
 ;;; file can be compiled, tested and benchmarked on its own.
@@ -389,7 +389,7 @@
 
 ;; Returns the element at index `i`. Descends by the cached left-subtree length; the chunk
 ;; reference is the only place the chunk-dict is consulted on this path, so on a leaf the
-;; element is read directly. (See notes.org: the hot-path optimization inlines this leaf case
+;; element is read directly. (See M0-notes.org: the hot-path optimization inlines this leaf case
 ;; and shares the tree walk.)
 (define (rope-ref σ ρ i)
   (let loop ([ρ ρ] [i i])

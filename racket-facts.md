@@ -82,14 +82,11 @@ raco make benchmarks/limit-harness.rkt benchmarks/limit-sweep.rkt   # before eve
 rm -rf benchmarks/compiled && raco make …                            # when in doubt
 ```
 
-## 6. Toolchain commands that work
+## 6. Toolchain behavior verified here
 
-```sh
-raco setup --no-info-domain --no-docs --pkgs data-rope   # sources only
-raco setup --pkgs data-rope                              # sources + docs + man pages
-raco test tests/                                         # ~114 tests, per-file summary lines
-raco cover -p -b data-rope                               # results in coverage/
-```
+The commands are listed in `AGENTS.md` §Commands. Behavior measured on this machine: the full test
+suite is ~114 tests and prints per-file summary lines; docs setup also writes man pages plus
+`data/rope/doc/`; coverage output lands in `coverage/`.
 
 ## 7. Shell gotchas observed
 
@@ -149,15 +146,14 @@ p50, 1024 → 1642, 16384 → 14494); `randref` improves with `limit` (221 → 1
 favors smaller `limit`, bytes `scan` favors larger; `merge-limit` below `limit` roughly halves
 typing latency and lowers the clean tail; `flat`/`load` are insensitive to both knobs.
 A bytes rope costs ~1.04 bytes/elem vs ~4.16 for a string rope, and byte edits are cheaper —
-relevant to notes.org §3.3 Q18 (string chunks vs UTF-8 byte chunks).
+relevant to `M0-notes.org` §3.3 Q18 (string chunks vs UTF-8 byte chunks).
 
-## 10. Project conventions that saved time
+## 10. Environment facts behind the conventions
 
-- `λ` not `lambda`; `->` not unicode arrows; `define-syntax-parse-rule` for macros; `syntax/parse`
-  over manual analysis; `match` sparingly; no `set!` except encapsulated hot paths; parameters OK.
-- `[` brackets for Racket idiom (this model's output is quantized; nested blocks need brackets).
-- `(require (prefix-in x/ …))` rather than `(require (prefix …))`.
-- Temp files go in `/tmp/opencode/`; nothing outside the project directory is writable (`/` is not).
+Project conventions are stated in `AGENTS.md` (§Code style, §Typography, §Operational Constraints).
+The environment facts that motivated them and are not stated there: nothing outside the project
+directory is writable (`/` is not), so temp files go in `/tmp/opencode/`, and this model's output is
+quantized enough that nested grammar blocks need explicit `[` brackets.
 
 ## 11. Running the oracle (dev branch) under the harness
 

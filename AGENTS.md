@@ -1,88 +1,84 @@
 # The Rope Library
 
-A fast, pure-Racket implementation of a generalized rope data structure. Its intended
-audience are Racket tool developers.
+Fast, pure-Racket generalized rope. Multi-lib package `data-rope`, Racket v9.3 [cs] (Chez Scheme
+backend). Optimize for response-time latency and a low-friction API.
 
-## Key Design priorities
+Read `racket-facts.md` first: it records hard lessons learned that save time.
 
-1. Produce ultra-optimized, clean, idiomatic Racket source code with minimum response-time
-   latency.
-2. Provide a clear, deliberately designed user experience with minimum friction.
+## Layout
 
-The target runtime is Racket v9.3 [cs].
+* Primary sources: `data/rope/`, `data/rope.rkt`
+* Docs: `data/rope/scribblings/` · Tests: `tests/` · Benchmarks: `benchmarks/`
 
-## File system
+## Commands
 
-The top-level project directory is `racket-data-rope`, a multi-lib Racket package named
-`data-rope`.
+```sh
+raco setup --pkgs data-rope                             # sources + metadata + docs
+raco setup --no-info-domain --no-docs --pkgs data-rope  # sources only
+raco make data/rope/some-file.rkt                       # one source file
+raco test tests/                                        # all tests
+raco test tests/X.rkt                                   # one test file
+raco cover -p -b data-rope                              # report -> coverage/
+```
 
-* Primary sources: /data/rope/ and /data/rope.txt
-* Documentation: /data/rope/scribblings/
-* Tests: /tests/
-* Benchmarks: /benchmarks/
+Compile the primary sources and the files you are about to run before every test or benchmark run:
+a stale `.zo` silently runs old code (`racket-facts.md` §5). Keep every micro-benchmark used for an
+architectural or design decision in `benchmarks/`.
 
-## Compilation
+## Test files
 
-* Everything, including package metadata and docs: `raco setup --pkgs data-rope`
-* All source files: `raco setup --no-info-domain --no-docs --pkgs data-rope`
-* Single source file: `raco make data/rope/some-file.rkt`
+rackunit hierarchy: `test-suite` definitions with `test-case`s at the leaves.
 
-## Testing
+* Unit tests for `data/rope/A.rkt` -> `tests/A-tests.rkt`; everything in that file, including
+  `require` statements, sits inside a top-level `(module+ test ..)`.
+* Integration tests for `data/rope/A.rkt` and `data/rope/B.rkt` -> `tests/A--B-tests.rkt`.
 
-* Organized into a hierarchy of rackunit `test-suite` definitions with individual
-  `test-case`s at its leaves.
-* Unit tests for data/rope/A.rkt go into tests/A-tests.rkt. Everything in this file goes
-  into a top-level `(module+ test ..)`, including `require` statements.
-* Integration tests for data/rope/A.rkt and data/rope/B.rkt go into tests/A--B-tests.rkt.
+## Code style
 
-* To run all tests in tests/: `raco test tests/`
-* To run a specific test file: `raco test tests/X.rkt`
-* Always compile primary sources and test files before running tests.
+* Modern `#lang racket`: clean, macro-safe, functional, idiomatic. No legacy PLT Scheme or
+  generic-Lisp code.
+* Macros use `define-syntax-parse-rule` (`syntax/parse`), never manual analysis. Require with
+  `(prefix-in x/ …)`, not `(prefix …)`.
+* `match` sparingly. No `set!` unless it measurably wins and is encapsulated safely; dynamically
+  scoped parameters (`parameterize`) are ok.
 
-## Code Coverage
+## Typography
 
-* To generate a code coverage report: `raco cover -p -b data-rope`
-* Results will be in the coverage/ directory.
+Applies to Racket source and `*.org` alike: `λ` not `lambda`; ASCII `->`, never unicode arrows; no
+LaTeX unless a formula cannot be expressed in Unicode; Greek letters (`τ`, `σ`, `ρ`, `α`) are fine.
 
-## Benchmarking
+## Org-mode markup
 
-* Keep all micro-benchmarks used to make architectural or design decisions in benchmarks/.
-* Always compile primary sources and benchmark files before running benchmarks.
+Design notes are `*.org` at the project root (`redesign-overview.org`, `M0-notes.org`,
+`M1-notes.org`). These rules apply to those files only, not to markdown.
 
-## Operational Constraints
+* Headings: one `*` per depth level, never skipping a level. First line of the file is `#+title:`,
+  plus `#+subtitle:` when useful.
+* Code listings go in `#+begin_src racket … #+end_src`. Reserve `#+begin_src text` for non-source
+  content such as an inference grammar or a compile-time error message.
+* Inline code: `=chunk-dict=` for names with no literal `=`; use `~` for quotes (`~elem<?~`) and for
+  names containing a literal `=` with no spaces on either side (`~rope=?~`).
+* Never a spaced `=` inside a delimiter pair: write plain text (`merge-limit = limit/8`) or split
+  the names (`=merge-limit=` = `=limit/8=`). Never an apostrophe possessive inside one
+  (`core.rkt='s` is invalid) — write "the pair of structs in `=core.rkt=`".
+* Bold `*text*`, italic `/text/`, kept rare; prefer code delimiters for identifiers and match the
+  density the existing notes use.
+* Tables: `+` separator row, as in `|---+---|`; no `|` inside a cell; inline-code rules apply inside
+  cells.
+* Legend table of review state (`Given` / `Accepted` / `Conditional` / `Proposed` / `Provisional`);
+  mark unverified claims `⟦verify⟧`.
 
-* In general, do not alter files outside the top-level project directory. Put any
-  temporary files into /tmp/opencode/.
-* Do not install external libraries without asking.
-* Do not use git push, git rebase, git merge, or remove existing git branches.
-* Write macros with `define-syntax-parse-rule` whenever possible.
-* Keep explanations concise. Prioritize code snippets over long paragraphs.
-* When in doubt, consult the official Racket docs before guessing. There is a local copy
-  of the Racket reference manual at /usr/share/doc/racket/reference/.
+## Operational constraints
 
-## Source Contents & Formatting
-
-* Use `λ` instead of `lambda`.
-* Never use unicode arrows. Always use ASCII `->`.
-* Avoid LaTeX unless a formula is impossible to represent in Unicode.
-* Read racket-facts.md. It contains important time-saving information on hard lessons learned.
-
-* **Language:** Racket 9.3 CS (Chez Scheme backend).
-* Write clean, macro-safe, functional, idiomatic code.
-* Always utilise modern #lang racket. Avoid legacy PLT Scheme or generic Lisp code.
-* Use syntax/parse for macros.
-* Use pattern matching via match sparingly.
-* Ban explicit state mutation (e.g., set!) except in cases where mutation would provide
-  superior performance and can be encapsulated safely.
-* Dynamically scoped parameters (e.g., parameterize) are ok.
-
-## Agent Behavior & Constraints
-
-* You are running on a tightly quantized local model. To prevent losing track of nested
-  grammar blocks, you MUST use square brackets `[]` where expected by Racket idiom.
+* Edit nothing outside the project directory (`/` is not writable); put temporary files in
+  `/tmp/opencode/`. Ask before installing external libraries.
+* Never `git push`, `git rebase`, `git merge`, or delete existing branches.
+* Answer concisely, code snippets over paragraphs. Consult `/usr/share/doc/racket/reference/` rather
+  than guessing.
+* You run on a tightly quantized local model: use square brackets `[]` wherever Racket idiom expects
+  them, so nested grammar blocks stay unambiguous.
 
 ## Git commit messages
 
-* Subject: first line only, under 68 characters — imperative, lowercase.
-* Details belong in the body: blank line, then the third line onward. Body lines
-  have no length limit; wrap at a readable width (~72) only for legibility.
+Subject: first line, under 68 characters, imperative, lowercase. Then a blank line, then the body
+(no length limit; wrap ~72 for legibility).

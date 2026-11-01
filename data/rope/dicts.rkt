@@ -76,9 +76,12 @@
 ;; The 2026-10-31 rerun at 1024 windows measured the bytes shape six times, medians: typing
 ;; 486/928 at 100 K elements and 399/1008 at 10 MB for 2048/256, against 483/1332 and 396/1036
 ;; for 2048/512; patches, deletes and pastes land within each other's tail noise; random access
-;; reads at 24/41 and 88/163. Merging up to `limit` is the worst shape on the edit tail at the
+;; reads at 24/41 and 88/163. The 2026-11-01 rerun did the same six runs on strings: 512/64 types
+;; at 544/1080 at 100 K elements and 515.5/1150.5 at 10 MB, and reads at 29/80.5 and 139/219. Merging up to `limit` is the worst shape on the edit tail at the
 ;; large size -- 6.9-8.5 µs clean p99 for patches, deletes and pastes at 10 MB. Byte chunks copy
-;; cheaper than string chunks, so bytes-dict's best `limit` is larger than string-dict's.
+;; cheaper than string chunks, so bytes-dict's best `limit` is larger than string-dict's: on
+;; strings, `limit 256` types ~11% cheaper than 512 but reads ~44% slower at 100 K elements, and
+;; `limit 1024` reads ~11% faster there while typing costs 656/1596 ns -- 512/64 is the frontier.
 ;; Retained size is payload-dominated: a rope costs about 1.04 bytes per element as bytes and
 ;; about 4.16 as string characters, of which the tree adds less than 0.2 bytes per element.
 

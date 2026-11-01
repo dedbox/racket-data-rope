@@ -279,7 +279,7 @@ rope-concat: ropes of different types
 | Gate | Pass | Source |
 |------------------+------------------------------------------------------------+-------------|
 | dictionary overhead | macro-layer =(rope-ref string-rope r i)= within 10% of a raw =(core:rope-ref σ ρ i)= on random access; else the leaf case is inlined at M3 | §3.2 row 6, ADR-005 |
-| latency ceilings | re-pinned 2026-10-31 on =bytes/2048/256= at 1024 windows; a gate compares the median of at least three runs | §3.2 row 12 |
+| latency ceilings | pinned on =bytes/2048/256= and =string/512/64= at 1024 windows (2026-10-31 and 2026-11-01); a gate compares the median of at least three runs | §3.2 row 12 |
 | compile time | flat in ops × types; record expansion time per op | ADR-005 |
 | erasure | no type tag, no per-node closure, no per-type struct; the pair of structs in =core.rkt= is unchanged | ADR-002 |
 | invariants | =rope-valid?= after every random operation through the macro layer | §1.3 |
@@ -295,8 +295,9 @@ rope-concat: ropes of different types
    =tests/core--ops-tests.rkt= after each step.
 3. =string.rkt=, =bytes.rkt=, then the collector =data/rope.rkt=.
 4. Sweep and re-pin; record the outcome in =M0-notes.org= (§1.5 M1, §3.2 rows 6 and 12).
-5. ADR-025 is signed off (2026-11-01): §3.2 row 12 is re-pinned on =bytes/2048/256=, and the
-   terminology drift in =M0-notes.org= is fixed. M0 is closed; the gates read those ceilings.
+5. ADR-025 is signed off (2026-11-01): §3.2 row 12 is pinned on both shapes -- =bytes/2048/256=
+   and =string/512/64= -- so each M1 type module has a ceiling to gate against, and the terminology
+   drift in =M0-notes.org= is fixed. M0 is closed; the gates read those ceilings.
 
 ** 13. Open decisions
 | # | Question | Affects |

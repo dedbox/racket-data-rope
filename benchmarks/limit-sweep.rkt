@@ -8,8 +8,9 @@
 ;;; 512, merge-limit 64) and bytes-dict 2048/256. The bytes merge-limit moved from limit/4 to
 ;;; limit/8 on the six-run rerun of 2026-10-31 at 1024 windows, which measured the smaller edit
 ;;; tail at both matched sizes (M0-notes.org §3.2 rows 8 and 12). All three dictionaries declare
-;;; a merge-limit well below the limit, which is what makes typing and patching cheap; the read
-;;; path pays about 11% over its best at 100 K elements and about 25% at 10 MB. vector-dict now
+;;; a merge-limit well below the limit, which is what makes typing and patching cheap. The read
+;;; path pays about 11% over its best at 100 K elements on either shape; at 10 MB the bytes shape
+;;; pays about 25% and the string shape about 2%. vector-dict now
 ;;; declares the token frontier measured by elem=token below (128/16), so no shipped dictionary
 ;;; relies on the default merge-limit == limit. The token shape stays benchmarked here rather
 ;;; than shipped in data/rope, because the pipeline type comes later (M0-notes.org §3.1 Q4: token

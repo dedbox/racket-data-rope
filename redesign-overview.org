@@ -56,9 +56,9 @@ DONE
   #:limit   512)                ; maximum chunk length
 #+end_src
 - It expands to a runtime dictionary constant, =(define string-rope:dict (chunk-dict …))=,
-  and a compile-time record bound to the type name, =(define-syntax string-rope (rope-type
-  …))=. The record holds the *syntax* of each primitive (for inlining) and the dictionary
-  identifier (for shared functions).
+  and a compile-time record bound to the type name by =define-syntax=. The record holds the
+  *syntax* of each primitive (for inlining) and the dictionary identifier (for shared
+  functions).
 - The type name is an ordinary binding. It is exported, imported, prefixed and renamed
   with the module system; nominal identity is binding identity, never spelling. (The
   legacy design needed a naming convention, =rope:string=, because the type name collides
@@ -102,8 +102,8 @@ type-of(e) = the type recorded for an identifier with static info
     preserving properties ⟦verify⟧. Anything outside the grammar (user macros producing
     ropes) uses =the=.
 - *Forms:* =define-rope=, =let-rope=, =(define-rope-op (f [a : string-rope] …) : string-rope …)=
-  for functions (a signature with a concrete type is just a monomorphic function), =(the T
-  e)= (unchecked assertion), =(rope-cast T e)= (a runtime-checked boundary for values from
+  for functions (a signature with a concrete type is just a monomorphic function), =(the T e)=
+  (unchecked assertion), =(rope-cast T e)= (a runtime-checked boundary for values from
   untyped code: =rope?= plus one =chunk?= test on the first leaf; with =my-text= it is free).
 - *Errors, at compile time:*
 #+begin_src text
@@ -119,10 +119,10 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
 #+begin_src racket
 (define-rope-ops
   ;; name        core function   signature               dictionary?
-  [rope-length   core:length     (τ → fixnum)             #:none]
-  [rope-concat   core:concat     (τ τ → τ)                #:dict]
-  [rope-slice    core:slice      (τ fixnum fixnum → τ)    #:dict]
-  [rope-ref      core:ref        (τ fixnum → elem)        #:dict #:fast-path leaf-ref])
+  [rope-length   core:length     (τ -> fixnum)             #:none]
+  [rope-concat   core:concat     (τ τ -> τ)                #:dict]
+  [rope-slice    core:slice      (τ fixnum fixnum -> τ)    #:dict]
+  [rope-ref      core:ref        (τ fixnum -> elem)        #:dict #:fast-path leaf-ref])
 #+end_src
   Each row defines one macro: infer τ from the arguments, check that all τ arguments
   agree, and expand to =(core:concat string-rope:dict a b)=. The signature gives arity
@@ -134,9 +134,9 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
     (if (τ.elem=? e x) (add1 n) n)))
 #+end_src
   - *Function mode (default):* a shared function =(rope-count/dict τ r x)= taking the
-    dictionary; =τ.elem=?= expands to a dictionary access.
-  - *Inline mode (=#:inline=):* a macro that splices the body with τ static; =τ.elem=?=
-    expands to =char=?= itself, and =in-rope= to a specialized loop.
+    dictionary; ~τ.elem=?~ expands to a dictionary access.
+  - *Inline mode (=#:inline=):* a macro that splices the body with τ static; ~τ.elem=?~
+    expands to ~char=?~ itself, and =in-rope= to a specialized loop.
 - *How one body yields both:* =τ.op= is an accessor macro that checks whether τ is
   statically a type (then: the primitive, as syntax) or a variable holding a dictionary
   (then: a runtime accessor). The same text compiles correctly in either mode. This
@@ -155,31 +155,32 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
   with =define-sequence-syntax=. Because the generic =in-rope= is itself the identifier the
   =for= clause sees, there is no per-type alias to lose the fast path. (This is the problem
   you found in V4, caused by aliasing a per-type sequence name through a rename
-  transformer.) A typed binding could also be made a sequence expander so that =(for ([c
-  doc]) …)= is specialized; ⟦verify⟧ whether the sequence-syntax protocol allows an
-  identifier macro with static info to take that role.
+  transformer.) A typed binding could also act as a sequence expander, specializing
+  =(for ([c doc]) …)=; ⟦verify⟧ whether the sequence-syntax protocol allows an identifier
+  macro with static info to take that role.
 **** 2.4 Classes
 ***** One concept
 - A class is a record schema indexed by a rope type: *operations*, some required, some with
   defaults (overridable), some provided. Instances fill the required operations. There is
   no separate notion of "parameter" and "member" (carve B from the earlier discussion),
-  and no import clause: a class reaches another class through its ops.
+  and no import clause: a class reaches another class through its ops. No legacy class grammar is carried over (§4.1, ADR-008): this
+  design stands on its own.
 #+begin_src racket
 (define-rope-class (equality τ)
-  [elem=?  : (elem elem → boolean)  #:default equal?]
+  [elem=?  : (elem elem -> boolean)  #:default equal?]
   (define-rope-op (rope=? [a : τ] [b : τ]) : boolean … ))
 
 (define-rope-class (total-order τ) #:extends (equality)
-  [elem<? : (elem elem → boolean)]
-  [elem>? : (elem elem → boolean)]
-  [chunk-compare : (chunk chunk fixnum fixnum fixnum → ordering) #:default (λ (c d i j k) …)]
+  [elem<? : (elem elem -> boolean)]
+  [elem>? : (elem elem -> boolean)]
+  [chunk-compare : (chunk chunk fixnum fixnum fixnum -> ordering) #:default (λ (c d i j k) …)]
   (define-rope-op (rope-compare [a : τ] [b : τ]) : ordering #:overridable …)
   (define-rope-op (rope<? [a : τ] [b : τ]) : boolean (eq? (rope-compare a b) '<)))
 
 (define-rope-instance (total-order string-rope)
   [elem<? char<?] [elem>? char>?])
 #+end_src
-- *Signatures replace syntax classes.* =(elem elem → boolean)= declares the arity and role
+- *Signatures replace syntax classes.* =(elem elem -> boolean)= declares the arity and role
   of an operation. An instance is checked against the arity (a λ literal statically; an
   identifier at instantiation time by =procedure-arity-includes?=, once, not on a hot path).
   Uses =(τ.elem<? a b)= are checked against the same signature, which gives the arity
@@ -207,8 +208,8 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
 | Item                                       | Treatment                                                                                                                                    |
 |--------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------|
 | type tag, equal-function, per-type structs | gone; there is no runtime evidence of a rope's type                                                                                          |
-| =equal?= on ropes                            | not supported: it falls back to =eq?=. Use =rope=?=. (A type-agnostic =equal?= would need the dictionary, i.e. a tag.)                             |
-| printing                                   | =prop:custom-write= prints =#<rope len=N>=; =(rope->source r)= gives the content                                                                   |
+| =equal?= on ropes                            | not supported: it falls back to =eq?=. Use ~rope=?~. (A type-agnostic =equal?= would need the dictionary, i.e. a tag.)                             |
+| printing                                   | =prop:custom-write= prints ~#<rope len=N>~; =(rope->source r)= gives the content                                                                   |
 | values from untyped code                   | =(rope-cast T v)=: structural check, one =chunk?= test                                                                                           |
 | *debug build*                                | compile-time switch: each root carries a type tag and every op asserts it; catches mistakes in =the= and casts. Off in production, on in tests |
 | first-class ops                            | structural ops (=rope-length=) are plain functions. Type-dependent ones are macros; =(rope-ref/τ string-rope)= yields a procedure                |
@@ -247,12 +248,36 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
 | inference                  | recursive function over unexpanded syntax, driven by op signatures                                                            | medium: the grammar must stay small; error messages carry the design's usability |
 | standard ops               | one table macro, one macro per row                                                                                            | low                                                                              |
 | dual-mode =τ.op=             | accessor macro dispatching on =(syntax-local-value τ)=                                                                          | medium: must work inside nested macros and =for= bodies                            |
-| #ERROR                     | re-expand the stored body syntax at each call; static τ                                                                       | low (it is what the legacy ops do)                                               |
+| =#:inline= ops             | re-expand the stored body syntax at each call; static τ                                                                       | low (it is what the legacy ops do)                                               |
 | classes, instances         | =define-syntax= records with a generated dictionary struct; instances bound by name                                             | medium: instance visibility is lexical (as before)                               |
 | unsafe core                | =(#%declare #:unsafe)= plus a safe/unsafe shim                                                                                  | medium: needs property tests that run the same code in safe mode                 |
 | specialization (later)     | module-level lift with a memo table                                                                                           | medium                                                                           |
 | avoided on purpose         | =local-expand= of arguments, syntax properties as a protocol, runtime dispatch, per-type template instantiation of library code | removes the main sources of expansion-time cost and fragility                    |
-#+TBLFM: $1=#:inline= ops
+
+**** 4.1 Anti-patterns the legacy macro system proved
+The legacy library's star expansion failed in ways this design must not repeat. They are
+requirements on the new macro layer, not features to port: the legacy implementation is not
+retained and no compatibility is intended (ADR-001, ADR-006, ADR-008).
+
+- Names resolve by *binding identity*, never by spelling. Textual substitution over every
+  identifier clobbered binders and captured call-site arguments.
+- A minted identifier carries its origin syntax (=format-id= from the source's context), so errors
+  and jumps point at real code. Regex-minted names had no provenance and resolved in the caller's
+  scope.
+- One validation point per expansion. Three validation times made errors arrive in the wrong order
+  and let clashing names go unnoticed.
+- Clash detection, plus a did-you-mean hint on an unknown member key, checked once from the table.
+- No ambient names in a member or op body: only =τ=, the keys the template uses, parameter names
+  and ordinary module scope. The legacy system leaked =κ=, =τ= and every member into every body.
+- A parameter expression is evaluated once, not at every call site.
+- Instance lookup reads the *lookup site* -- the module where work started -- not the spelling of
+  the type identifier. Order-dependent instance discovery is a bug, not a convention.
+- No alias indirection for sequence members: aliasing a per-type sequence name through a rename
+  transformer lost the =:do-in= fast path of =for= (legacy V4). One generic =in-rope= with static
+  inference instead (ADR-007).
+- Compile time and expansion size are measured, never assumed (legacy V5 was never measured).
+- IDE ergonomics: identifiers minted by =format-id= draw no DrRacket arrows (legacy V6), so rely on
+  domain-level error messages rather than on editor navigation.
 
 *** 5. Latency plan
 **** 5.1 Design choices that bound latency
@@ -277,3 +302,7 @@ rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
 | join-based balance                 | Blelloch, Ferizovic, Sun (2016)                                                                                                                         |
 | static info on bindings            | Rhombus static information (Flatt et al., 2023) ⟦verify⟧                                                                                                |
 | types erased at runtime            | Typed Racket (types erased after checking)                                                                                                              |
+| trait-style member defaults      | traits (Schärli et al., 2003) -- as a name only: ADR-008 rejects trait-composition operators   |
+| chunk algebra as an interface    | Racket unit signatures (Flatt and Felleisen, 1998)                                            |
+| instance coherence               | coherence and evidence selection (Bottu et al., 2019)                                         |
+| wide-node fan-out layouts        | wide/fan-out rope designs in editor implementations (Xi's editor, Ropey) ⟦verify⟧             |

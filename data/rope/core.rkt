@@ -410,7 +410,7 @@
 
 ;; Returns the rope's chunks as a list, left-to-right.
 (define (rope-chunks ρ)
-  (reverse (rope-fold-chunks (lambda (acc c) (cons c acc)) null ρ)))
+  (reverse (rope-fold-chunks (λ (acc c) (cons c acc)) null ρ)))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Structural statistics and validation

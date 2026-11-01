@@ -1,5 +1,5 @@
-* [2026-10-31 Sat 18:02]
 #+title: milestone M1 -- the type layer and the standard-operation table
+#+date: 2026-10-31
 #+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =M0-notes.org= §1.5, §3.2, §3.3; =redesign-overview.org= §2.2-§2.3.
 
 ** 0. Status legend
@@ -12,14 +12,15 @@
 ** 1. Terminology, and where the legacy system sits
 - *Terminology.* The shipped names are dictionary names: =chunk-dict= in =data/rope/core.rkt=, and
   =string-dict= / =bytes-dict= / =vector-dict= in =data/rope/dicts.rkt= (commit =982271a=, "rename
-  chunk signatures to chunk dictionaries"). =M0-notes.org= still carries stale =sig= spellings in
-  ADR-001, ADR-018, ADR-019, §3.2 rows 8 and 21, and §4's intro (=chunk-sig=, =sigs.rkt=,
-  =string-sig=). Those are doc drift, not design: the code names above are the ones M1 builds on,
+  chunk signatures to chunk dictionaries"). The stale =sig= spellings in =M0-notes.org= are now corrected (ADR-001, ADR-018, ADR-019,
+  §3.2 rows 8 and 21, §4's intro) in the pass that added ADR-025, and §1.2 and §1.3 there write
+  =length= as =core.rkt= does. The code names above are the ones M1 builds on,
   and a type's runtime constant is named =τ:dict= by convention, e.g. =string-rope:dict=.
 - *The legacy system* lives in a separate repository, =/home/eric/work/racket-rope= (branch =dev=),
-  and is the oracle for differential testing (§1.6). Its =rope-signature= has 45 members realized
-  per type by =star-substitute= (=generic/define.rkt=, =type.rkt=), producing realized names such as
-  =*-rope-concat= that become API surface. M1 replaces that realization with dictionary passing.
+  and serves only as the oracle for differential content tests and latency comparison (§1.6).
+  None of its design is retained: M1 replaces per-type realization of a 45-member interface with
+  dictionary passing, and the only lessons worth keeping are the anti-pattern list in
+  =redesign-overview.org= §4.1.
 
 ** 2. What M1 contains
 - *One idea.* M1 makes a rope type an ordinary module binding that is *both* a compile-time index
@@ -252,6 +253,8 @@ rope-concat: ropes of different types
 - =data/rope/dicts.rkt= shrinks: its three dictionaries are superseded by the type modules'
   constants. Keep only the generic flatten helper (=rope->source-in=, driven by a dictionary) there.
   Two dictionary constants for one chunk representation would break coherence (invariant 8).
+  =vector-dict= now declares =#:merge-limit 16= (=limit/8=), matching §3.2 row 21 rather than the
+  unmeasured default.
 - =data/rope.rkt= becomes the collector: re-export the op macros plus =string-rope= and its
   conversions, so =(require data/rope)= covers the common case and =data/rope/bytes= is opt-in.
 
@@ -291,7 +294,8 @@ rope-concat: ropes of different types
    =tests/core--ops-tests.rkt= after each step.
 3. =string.rkt=, =bytes.rkt=, then the collector =data/rope.rkt=.
 4. Sweep and re-pin; record the outcome in =M0-notes.org= (§1.5 M1, §3.2 rows 6 and 12).
-5. Fix the stale =sig= spellings: ADR-001, ADR-018, ADR-019, §3.2 rows 8 and 21, §4's intro.
+5. Sign off ADR-025 once §3.2 row 12 is re-pinned on the bytes configs (2048/512); the
+   terminology drift in =M0-notes.org= is already fixed.
 
 ** 13. Open decisions
 | # | Question | Affects |
@@ -302,3 +306,6 @@ rope-concat: ropes of different types
 | 4 | A =#:width= procedure is evaluated at leaf construction today (=make-leaf=). What does inline mode do with it at M3 -- inline the call, or keep the cached leaf measure? | ADR-017, ADR-005 |
 | 5 | Is the compile-error harness (=racket -e= subprocess) acceptable, or should it drive =compiler/compile= directly? | §1.6 |
 | 6 | Does =α= in a signature (the fold's accumulator) need a real check, or stay unchecked until M2's inference exists? | ADR-003 |
+| 7 | Contract policy: does the typed layer check that start <= end and end <= length hold, or document preconditions and let the chunk primitives raise? =core.rkt= checks nothing today. | ADR-011, §1.6 |
+| 8 | Chunk ownership: a source at or below =limit= is stored verbatim, so a later mutation of a mutable source leaks into the rope. Copy on adopt, document immutability, or assert in the debug build? | ADR-002, ADR-011 |
+| 9 | Does M1 ship a token type (vector chunks of token structs, 128/16, §3.2 row 21) or stay with =string-rope= and =bytes-rope= until the pipeline type exists? | ADR-018, §3.3 Q21 |

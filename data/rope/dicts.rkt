@@ -85,9 +85,13 @@
                                   #:slice subbytes #:append bytes-append
                                   #:width 1 #:limit 2048 #:merge-limit 512))
 
+;; vector-dict uses the token frontier measured by benchmarks/limit-sweep.rkt (M0-notes §3.2
+;; row 21): limit 128 with merge-limit 16, which is limit/8 -- the same rule the two pipeline
+;; dictionaries follow. The default merge-limit, equal to limit, measured as the worst edit
+;; tail at every token size, so the field is declared rather than filled in from limit.
 (define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                                    #:slice vector-copy #:append vector-append
-                                   #:width 1 #:limit 128))
+                                   #:width 1 #:limit 128 #:merge-limit 16))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Building a rope from a source value

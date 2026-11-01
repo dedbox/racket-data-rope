@@ -59,7 +59,7 @@
   (define limits (list 512 2048 128))
   ;; The merge-limits the module declares. They are what merging tests read: a merge is allowed
   ;; when the two boundary chunks together weigh at most `merge-limit`.
-  (define merge-limits (list 64 512 128))
+  (define merge-limits (list 64 512 16))
 
   ;; The source chunk for n elements, per dict.
   (define (src σ n)
@@ -146,11 +146,12 @@
         (check-equal? (chunk-dict-limit bytes-dict) 2048)
         (check-equal? (chunk-dict-merge-limit bytes-dict) 512)
         (check-equal? (chunk-dict-limit vector-dict) 128)
-        (check-equal? (chunk-dict-merge-limit vector-dict) 128))
+        (check-equal? (chunk-dict-merge-limit vector-dict) 16))
       (test-case "a merge-limit is never larger than its limit, which bounds leaves"
         ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so the
-        ;; leaf invariant `rope-valid?` checks holds only while merge-limit <= limit. Only
-        ;; vector-dict declares the two as equal; the measured dicts merge less than they split.
+        ;; leaf invariant `rope-valid?` checks holds only while merge-limit <= limit. Every
+        ;; shipped dict declares a merge-limit below its limit; only the default fill makes the
+        ;; two equal.
         (for ([σ (in-list dicts)] [limit (in-list limits)] [merge-limit (in-list merge-limits)])
           (check-equal? (chunk-dict-merge-limit σ) merge-limit)
           (check-true (<= (chunk-dict-merge-limit σ) (chunk-dict-limit σ))
@@ -158,9 +159,12 @@
         (check-equal? (chunk-dict-merge-limit string-dict)
                     (/ (chunk-dict-limit string-dict) 8))
         (check-equal? (chunk-dict-merge-limit bytes-dict)
-                    (/ (chunk-dict-limit bytes-dict) 4)))
+                    (/ (chunk-dict-limit bytes-dict) 4))
+        (check-equal? (chunk-dict-merge-limit vector-dict)
+                    (/ (chunk-dict-limit vector-dict) 8)))
       (test-case "merge-limit defaults to limit when it is not declared"
-        ;; make-chunk-dict fills the field from `limit`, which is how vector-dict is written.
+        ;; make-chunk-dict fills the field from `limit`; this synthetic dict exercises that
+        ;; default, which no shipped dict uses any more.
         (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append #:limit 7))
         (check-equal? (chunk-dict-merge-limit cs) 7))

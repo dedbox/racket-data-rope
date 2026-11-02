@@ -175,3 +175,23 @@ names the kind). The keys are a closed set; adding a key is a decision, not a ha
 
 Subject: first line, under 68 characters, imperative, lowercase. Then a blank line, then the body (no
 length limit; wrap ~72).
+
+### Merge-squash commits into `dev`
+
+A merge-squash of a feature branch into `dev` replaces a whole branch of history with one commit, so
+its message must stand on its own: a reader who never saw the branch or the design notes still
+understands what changed.
+
+- Content: the achievements as list items, then what each one entailed, in concrete terms. No
+  milestone names and no citations into `notes/*.org` or decision records -- the message restates the
+  outcome rather than pointing at the record.
+- Files and figures: name the files that changed and the values the measurements settled -- a chunk
+  limit, a bytes-per-element figure, a latency ratio -- never the internal labels for them.
+- Plain words: no `pinned`, `gated`, `ceilings`, or `close-out`; `add` / `include` over `land`
+  (§Prose). Do not assume the reader knows why a knob matters.
+- State what is absent: if the commit ships no public API or no documentation, say so and name what
+  comes next.
+- Test results: a line for the latency gate or the suite is allowed only when the run happened before
+  the merge, and it names the closest margin instead of asserting a vague pass.
+- Formatting: the rules above still hold, with `*` list items whose continuations indent two spaces
+  and no body line past 72 columns.

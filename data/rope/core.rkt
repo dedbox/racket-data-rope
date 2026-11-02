@@ -33,11 +33,11 @@
 ;;;   makes every predicate and accessor a single record-type test.
 ;;;
 ;;; - `empty-rope` is the unique empty rope for every type. No operation ever builds an
-;;;   empty leaf. Instead, they return this value, collapsing empty rope equality to pointer
-;;;   equality (`eq?`).
+;;;   empty leaf. Instead, they return this value, collapsing empty rope equality to
+;;;   pointer equality (`eq?`).
 ;;;
 ;;; - `rope-valid?` checks every structural invariant, which currently includes cached
-;;;    measures, AVL balance, and leaf-size caps. It should only be used for testing.
+;;;   measures, AVL balance, and leaf-size caps. It should only be used for testing.
 
 (provide (all-defined-out))
 
@@ -71,19 +71,20 @@
 ;;
 ;; A rope value contains no reference to it. Instead, callers pass it explicitly to
 ;; functions that need it, allowing each rope operation to have a uniform, type-erased
-;; implementaton. Ropes are nominally typed -- each chunk-dict represents a distinct type.
+;; implementation. Ropes are nominally typed -- each chunk-dict represents a distinct type.
 
 ;;   empty       -- the empty chunk value
 ;;   length      -- chunk → nat        (element count)
 ;;   ref         -- chunk nat → element
 ;;   slice       -- chunk nat nat → chunk   (Racket convention: [start, end))
 ;;   append      -- chunk chunk → chunk
-;;   width       -- chunk → nat        (element index span; may be a procedure or a constant)
+;;   width       -- chunk → nat        (index span; procedure or per-element constant)
 ;;   limit       -- max elements per leaf
 ;;   merge-limit -- concat merges boundary leaves when combined length ≤ this
 (struct chunk-dict (empty length ref slice append width limit merge-limit) #:authentic #:sealed)
 
-;; smart constructor
+;; Build a `chunk-dict`: `#:width` takes a procedure or a per-element constant, and
+;; `#:merge-limit` defaults to `#:limit`.
 (define (make-chunk-dict #:empty e #:length len #:ref ref #:slice slice #:append app
                          #:width [width 1] #:limit limit #:merge-limit [merge-limit limit])
   (chunk-dict e len ref slice app
@@ -111,7 +112,7 @@
 ;; ---------------------------------------------------------------------------------------
 
 ;; Build a node from two already-balanced children, recomputing cached measures. It is the
-;; caller's responsibility (e.g, `rope-join`) to guarantee that the result stays balanced.
+;; caller's responsibility (e.g., `rope-join`) to guarantee that the result stays balanced.
 (define (make-node l r)
   (node (+ (rope-length l) (rope-length r))
         (+ (rope-width l) (rope-width r))

@@ -13,20 +13,21 @@
   ;; Fixtures and helpers
   ;; =====================================================================
 
-  ;; A chunk-dict over strings, one element per character (width == length).
+  ;; Build a chunk-dict over strings, one element per character (width == length).
   (define (char-dict [limit 4] [merge-limit limit])
     (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                     #:slice substring #:append string-append
                     #:width 1 #:limit limit #:merge-limit merge-limit))
 
-  ;; A chunk-dict over lists of strings: length counts strings, width counts characters,
-  ;; so width and length can diverge and exercise the additive measure independently.
+  ;; Build a chunk-dict over lists of strings: length counts strings, width counts
+  ;; characters, so width and length can diverge and exercise the additive measure
+  ;; independently.
   (define (list-dict [limit 4])
     (make-chunk-dict #:empty '() #:length length
-                    #:ref (lambda (c i) (list-ref c i))
-                    #:slice (lambda (c i j) (take (drop c i) (- j i)))
+                    #:ref (λ (c i) (list-ref c i))
+                    #:slice (λ (c i j) (take (drop c i) (- j i)))
                     #:append append
-                    #:width (lambda (c) (apply + (map string-length c)))
+                    #:width (λ (c) (apply + (map string-length c)))
                     #:limit limit))
 
   (define σ4 (char-dict 4))   ; default element type: chars, limit 4, merge-limit 4
@@ -35,15 +36,15 @@
 
   (define (leaf! s) (make-leaf σ4 s))
 
-  ;; Element sequence of a rope as a list (works for any chunk-dict).
+  ;; Return the element sequence of a rope as a list (works for any chunk-dict).
   (define (elems σ ρ)
     (for/list ([i (in-range (rope-length ρ))]) (rope-ref σ ρ i)))
 
-  ;; Rope content as a string of characters.
+  ;; Return the rope's content as a string of characters.
   (define (strof σ ρ)
     (list->string (elems σ ρ)))
 
-  ;; A deterministic pseudo-random string of the given length.
+  ;; Build a deterministic pseudo-random string of the given length.
   (random-seed 20261027)
   (define (rnd n) (random n))
   (define (rndstr n)
@@ -91,7 +92,7 @@
       (test-case "procedure width is used directly"
         (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                    #:slice substring #:append string-append
-                                   #:width (lambda (c) (string-length c)) #:limit 10))
+                                   #:width (λ (c) (string-length c)) #:limit 10))
         (check-equal? ((chunk-dict-width cs) "abc") 3))
       (test-case "merge-limit defaults to limit"
         (define cs (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
@@ -320,8 +321,8 @@
       (test-case "ref on a single-leaf rope"
         (check-equal? (rope-ref σ4 (leaf! "hij") 1) #\i))
       (test-case "out-of-bounds ref raises"
-        (check-exn exn? (lambda () (rope-ref σ4 ρ-ref 5)))
-        (check-exn exn? (lambda () (rope-ref σ4 ρ-ref -1))))))
+        (check-exn exn? (λ () (rope-ref σ4 ρ-ref 5)))
+        (check-exn exn? (λ () (rope-ref σ4 ρ-ref -1))))))
 
   ;; =====================================================================
   ;; fold-chunks / chunks
@@ -329,7 +330,7 @@
   (define suite-fold-chunks
     (test-suite "fold-chunks and chunks"
       (test-case "fold over empty-rope returns the initial accumulator"
-        (check-equal? (rope-fold-chunks (lambda (acc c) (cons c acc)) 'init empty-rope) 'init))
+        (check-equal? (rope-fold-chunks (λ (acc c) (cons c acc)) 'init empty-rope) 'init))
       (test-case "chunks are returned left-to-right"
         (define ρ (chunk->rope σ4 "abcdefgh")) ; limit 4 -> two chunks
         (check-equal? (rope-chunks ρ) '("abcd" "efgh")))
@@ -338,7 +339,7 @@
         (define s (for/fold ([out ""]) ([c (in-list (rope-chunks ρ))]) (string-append out c)))
         (check-equal? s "abcdefgh"))
       (test-case "empty leaves contribute nothing to the fold"
-        (check-equal? (rope-fold-chunks (lambda (acc c) (add1 acc)) 0 empty-rope) 0))))
+        (check-equal? (rope-fold-chunks (λ (acc c) (add1 acc)) 0 empty-rope) 0))))
 
   ;; =====================================================================
   ;; leaf/node counts

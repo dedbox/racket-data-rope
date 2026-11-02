@@ -42,10 +42,84 @@ rackunit hierarchy: `test-suite` definitions with `test-case`s at the leaves.
 * `match` sparingly. No `set!` unless it measurably wins and is encapsulated safely; dynamically
   scoped parameters (`parameterize`) are ok.
 
+## Comments
+
+Three tiers: module header, section header, definition doc. Applies to `data/rope/`, `tests/`, and
+`benchmarks/`; `benchmarks/dev-shim/` mirrors the oracle library and is exempt. The rules cover
+Racket comments and `*.org` notes, not markdown.
+
+### Dividers
+
+* Module header: `;;; path -- one-line role.`, blank `;;;`, then `=== Name ===` blocks
+  (`=== What a rope is ===`, `=== Naming conventions ===`, `=== Key invariants ===`). ≤ 24 prose
+  lines; blank separators and `===` headings do not count.
+* Section rule: an 80-column `;; ---...---`, title on the next line, optional ` -- gloss` naming
+  the section's character (`-- standard AVL rotations`, `-- O(log n) path-copy operations`,
+  `-- diagnostics only`). Text under the rule belongs to the section, never to a function.
+* A bare `;;` is a paragraph break. One idea per paragraph, 2-4 lines.
+* Test files use `;; ===...===` rules over `test-suite` groups.
+
+### Definition docs
+
+* Directly above what it describes, never between two definitions.
+* Imperative, result-first: `Return the elements in [i, j).` not `Returns ...`.
+* Contract edge cases go in the doc (`When `i = j`, return the empty rope`); implementation
+  narration stays out -- the body below already shows the steps.
+* Struct fields listed above the struct as aligned `name -- gloss` columns. Operation fields use
+  signature notation (`slice -- chunk nat nat → chunk`); data fields use sentence glosses ending
+  in a period.
+* Self-evident one-liners get no doc (`rope?`, `first-leaf`); the section header carries them.
+* ASCII diagrams sit beside the function they explain, led by one line naming the outcome
+  (`Left rotation: the right child becomes the new root.`). Node placeholders stay `ρ`, `ρ′`,
+  `ρ′′`, `ρ*`, `·₀`/`·₁`/`·₂`.
+* `Precondition:` is the last line above a definition (`height(l) > height(r) + 1 ⇒ l is a node`).
+
+### Never in source
+
+* Roadmap and layer talk: no unwritten layers (types, ops, classes), no architecture tables. Those
+  live in the `*.org` notes.
+* Speculative maintenance advice ("keep it that way", "in case the representation changes"). State
+  the invariant instead.
+* Measured figures. Numbers live in `M0-notes.org` §3.2 and `racket-facts.md`; the source keeps the
+  decision and the rule, then cites (`See M0-notes.org §3.2 row 8.`). Re-pinning a ceiling must
+  touch the notes and one pointer, not three files of prose.
+* Any fact stated twice: a section-wide fact appears in the section header only. Keep every ADR id
+  and notes row that constrains the code -- delete prose, never pointers.
+
+### Prose
+
+* Fill the column: prose lines land in the 85-91 band, hard cap 93, ragged only on a paragraph's
+  last line. Paragraph breaks fall between lines, never mid-sentence.
+* Lists use `-`. Pack single-line items with no blank lines between them; separate with a blank line
+  only when more than one item wraps to a second line. Continuations align to the item's text column
+  (the comment prefix plus 3 spaces).
+* Backtick identifiers, never paraphrase: `the last leaf of `l`` beats "the last leaf of the left
+  rope". Comment names match the code's names (`l`, `r`, `ρ′`).
+* Bold (`**runtime**`) marks a term being defined, at most once per module; no italics.
+* Cite papers as `Blelloch, Ferizovic & Sun (2016)` -- authors and year, no title. Project evidence
+  as `ADR-019`, `M0-notes.org §3.2 row 8`, `benchmarks/limit-sweep.rkt`; keep the `.org` suffix and
+  the `e.g.,` / `i.e.,` forms.
+* Hedge claims to the regime measured (`at 10 MB`, `for files at this size`); never `always`, never
+  `the biggest win in this file`.
+* Proofread the rewrite in the same pass. Self-check:
+
+  ```sh
+  grep -rn --include='*.rkt' '[[:space:]]$' data/rope tests benchmarks     # trailing whitespace
+  grep -rn --include='*.rkt' '(lambda (' data/rope tests benchmarks        # typography: λ
+  grep -rn --include='*.rkt' -E '^ *(;;;?)[[:space:]]+(Returns|Builds|Concatenates|Replaces)' \
+    data/rope tests benchmarks                                            # imperative mood
+  grep -rn --include='*.rkt' -E '^ *(;;;?)[[:space:]]+\* ' data/rope tests benchmarks  # lists use -
+  grep -rn --include='*.rkt' 'M0-notes[^.o]' data/rope tests benchmarks    # cite the .org file
+  awk '/^ *(;;;?)/ && length($0) > 93' data/rope/*.rkt tests/*.rkt benchmarks/*.rkt
+  ```
+
 ## Typography
 
 Applies to Racket source and `*.org` alike: `λ` not `lambda`; ASCII `->`, never unicode arrows; no
 LaTeX unless a formula cannot be expressed in Unicode; Greek letters (`τ`, `σ`, `ρ`, `α`) are fine.
+Comments may use `≤` and `≥` (they are typography like Greek letters); code keeps `<=` and `>=`. `→`
+appears only inside notation lines (`slice -- chunk nat nat → chunk`) and `⇒` only in
+`Precondition:` lines; prose keeps ASCII `->`.
 
 ## Org-mode markup
 

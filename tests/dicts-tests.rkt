@@ -8,20 +8,19 @@
 ;;; core does with it.
 ;;;
 ;;; What the tests assert:
-;;;   * slice follows Racket's [start, end) convention (start and end, not start and count)
-;;;   * the limits and merge-limits are the values the module declares
-;;;   * width is a procedure, and for these dicts it equals the element count
-;;;   * an empty chunk collapses to the shared empty-rope, and appending two empty chunks
-;;;     is still an empty chunk
-;;;   * append itself ignores limit; rope-concat bounds chunk size through merge-limit
-;;;   * a chunk at or below the limit is stored verbatim; a chunk above it is split and
-;;;     copied
-;;;   * flattening accumulates chunk offsets across uneven chunks, ignores the width
-;;;     measure, and produces a fresh buffer that shares nothing with a chunk
-;;;   * the wrong-type error only surfaces when a chunk is copied, so an empty rope of any
-;;;     dict flattens, and a mismatched one raises naming the copy
-;;;   * out-of-range access reports the chunk primitive's own error, not a rope error
-;;;   * a vector chunk is mutable, so a rope built from a vector aliases that vector
+;;;
+;;; - slice takes start and end, not start and count (Racket's convention)
+;;; - the limits and merge-limits are the values the module declares
+;;; - `width` is a procedure and equals the element count on these chunks
+;;; - an empty chunk collapses to `empty-rope`; two empty chunks append to an empty chunk
+;;; - `append` ignores `limit`; `rope-concat` bounds chunk size through `merge-limit`
+;;; - a chunk at or below `limit` is stored verbatim; above it, it is split and copied
+;;; - flattening accumulates chunk offsets across uneven chunks and ignores `width`
+;;; - flattening copies, so the buffer is fresh and shares nothing with a chunk
+;;; - a wrong-type chunk raises only when it is copied, so an empty rope flattens
+;;; - a mismatched rope raises, naming the copy primitive that failed
+;;; - out-of-range access reports the chunk primitive's own error, not a rope error
+;;; - a vector chunk is mutable, so a rope built from one aliases that vector
 
 (module+ test
   (require rackunit
@@ -42,7 +41,8 @@
   (define (byte-at i)
     (+ 97 (modulo i 2)))
 
-  ;; A vector element: a list, so it is distinguishable by identity as well as by value.
+  ;; Build a vector element -- a list, so it is distinguishable by identity as well as by
+  ;; value.
   (define (elem-at i)
     (list i 'sym 3.5))
 
@@ -57,59 +57,60 @@
 
   (define dicts (list string-dict bytes-dict vector-dict))
   (define limits (list 512 2048 128))
-  ;; The merge-limits the module declares. They are what merging tests read: a merge is allowed
-  ;; when the two boundary chunks together weigh at most `merge-limit`.
+  ;; The merge-limits the module declares. They are what merging tests read: a merge is
+  ;; allowed when the two boundary chunks together weigh at most `merge-limit`.
   (define merge-limits (list 64 256 16))
 
-  ;; The source chunk for n elements, per dict.
+  ;; Return the source chunk for `n` elements of `σ`.
   (define (src σ n)
     (cond
       [(eq? σ string-dict) (str n)]
       [(eq? σ bytes-dict) (byt n)]
       [else (vect n)]))
 
-  ;; A rope built from the chunk `c` through dict σ's converter, when one exists.
+  ;; Build a rope from the chunk `c` through `σ`'s converter, when one exists.
   (define (rope-from σ c)
     (cond
       [(eq? σ string-dict) (string->rope c)]
       [(eq? σ bytes-dict) (bytes->rope c)]
       [else (chunk->rope vector-dict c)]))
 
-  ;; A rope of n elements.
+  ;; Build a rope of `n` elements.
   (define (build σ n)
     (rope-from σ (src σ n)))
 
-  ;; A chunk's elements as a list: the model a rope is compared against.
+  ;; Return a chunk's elements as a list -- the model a rope is compared against.
   (define (elem-list σ c)
     (cond
       [(eq? σ string-dict) (string->list c)]
       [(eq? σ bytes-dict) (bytes->list c)]
       [else (vector->list c)]))
 
-  ;; A rope's elements, left-to-right.
+  ;; Return a rope's elements, left-to-right.
   (define (elems σ ρ)
     (for/list ([i (in-range (rope-length ρ))])
       (rope-ref σ ρ i)))
 
-  ;; A rope's chunk sizes, left-to-right.
+  ;; Return a rope's chunk sizes, left-to-right.
   (define (chunk-sizes σ ρ)
     (for/list ([c (in-list (rope-chunks ρ))]
                #:when (positive? ((chunk-dict-length σ) c)))
       ((chunk-dict-length σ) c)))
 
-  ;; The largest chunk size in a rope.
+  ;; Return the largest chunk size in a rope.
   (define (largest-chunk σ ρ)
     (for/fold ([m 0]) ([c (in-list (rope-chunks ρ))])
       (max m ((chunk-dict-length σ) c))))
 
-  ;; Chunk-level counterparts of the rope operations, for the expected content.
+  ;; Return the chunk-level counterpart of `rope-slice`, for the expected content.
   (define (slice* σ c i j)
     ((chunk-dict-slice σ) c i j))
 
+  ;; Return the chunk-level counterpart of `rope-concat`.
   (define (append* σ a b)
     ((chunk-dict-append σ) a b))
 
-  ;; The chunk expected after replacing [i, j) of `s` by `ins`.
+  ;; Return the chunk expected after replacing [i, j) of `s` by `ins`.
   (define (splice* σ s i j ins)
     (define n ((chunk-dict-length σ) s))
     (append* σ (append* σ (slice* σ s 0 i) ins) (slice* σ s j n)))
@@ -139,8 +140,9 @@
   (define suite-algebra
     (test-suite "chunk algebra"
       (test-case "limits and merge-limits are the declared values"
-        ;; The values benchmarks/limit-sweep.rkt measured for the editor pipeline. They are
-        ;; tunables, so this test pins them: changing a constant in dicts.rkt must change here.
+        ;; The values benchmarks/limit-sweep.rkt measured for the editor pipeline. They
+        ;; are tunables, so this test pins them: changing a constant in dicts.rkt must
+        ;; change here.
         (check-equal? (chunk-dict-limit string-dict) 512)
         (check-equal? (chunk-dict-merge-limit string-dict) 64)
         (check-equal? (chunk-dict-limit bytes-dict) 2048)
@@ -148,10 +150,11 @@
         (check-equal? (chunk-dict-limit vector-dict) 128)
         (check-equal? (chunk-dict-merge-limit vector-dict) 16))
       (test-case "a merge-limit is never larger than its limit, which bounds leaves"
-        ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so the
-        ;; leaf invariant `rope-valid?` checks holds only while merge-limit <= limit. Every
-        ;; shipped dict declares a merge-limit below its limit; only the default fill makes the
-        ;; two equal. All three follow the measured limit/8 rule (M0-notes §3.2 row 8).
+        ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so
+        ;; the leaf invariant `rope-valid?` checks holds only while merge-limit ≤ limit.
+        ;; Every shipped dict declares a merge-limit below its limit; only the default
+        ;; fill makes the two equal. All three follow the limit/8 rule (M0-notes.org §3.2
+        ;; row 8).
         (for ([σ (in-list dicts)] [limit (in-list limits)] [merge-limit (in-list merge-limits)])
           (check-equal? (chunk-dict-merge-limit σ) merge-limit)
           (check-true (<= (chunk-dict-merge-limit σ) (chunk-dict-limit σ))
@@ -371,8 +374,8 @@
         (check-exn #rx"string-copy!" (λ () (rope->string (bytes->rope (byt 10)))))
         (check-exn #rx"bytes-copy!" (λ () (rope->bytes (string->rope (str 10))))))
       (test-case "flattening a rope whose boundary chunks merged into one leaf"
-        ;; Two chunks that together sit exactly at string-dict's merge-limit (64) merge into one,
-        ;; so the flattened rope is a single leaf.
+        ;; Two chunks that together sit exactly at string-dict's merge-limit (64) merge
+        ;; into one, so the flattened rope is a single leaf.
         (define ρ (rope-concat string-dict (string->rope (str 32)) (string->rope (str 32))))
         (check-equal? (chunk-sizes string-dict ρ) (list 64))
         (check-equal? (rope->string ρ) (append* string-dict (str 32) (str 32))))))
@@ -384,8 +387,8 @@
     (test-suite "operations through the dicts"
       (test-case "concat merges boundary chunks when they fit merge-limit"
         (for ([σ (in-list dicts)] [merge-limit (in-list merge-limits)])
-          ;; Two halves that together sit exactly at merge-limit merge into a single leaf, and
-          ;; that leaf is still within `limit`.
+          ;; Two halves that together sit exactly at merge-limit merge into a single leaf,
+          ;; and that leaf is still within `limit`.
           (define half (src σ (/ merge-limit 2)))
           (define ρ (rope-concat σ (build σ (/ merge-limit 2)) (build σ (/ merge-limit 2))))
           (check-equal? (chunk-sizes σ ρ) (list merge-limit))

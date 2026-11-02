@@ -2,16 +2,15 @@
 
 ;;; data/rope/dicts.rkt -- chunk dictionaries for common element types.
 ;;;
-;;; These chunk dictionaries demonstrate what a rope of characters actually holds. The
-;;; actual `chunk-dict` value is a **runtime** value, not syntax -- call sites pass it
-;;; explicitly, e.g., (rope-ref string-dict ρ i), and the type layer makes that passing
-;;; implicit.
+;;; These chunk dictionaries demonstrate what a rope of characters actually holds. A
+;;; `chunk-dict` is a **runtime** value, not syntax: call sites pass it explicitly, e.g.,
+;;; (rope-ref string-dict ρ i).
 ;;;
 ;;; Per the same convention as core.rkt, `σ` names a chunk-dict argument, `ρ` a rope, and
 ;;; `c` a chunk.
 ;;;
-;;; Dictionaries do not contain equality, hashing, or ordering operations. Content
-;;; comparison is a class operation, and `equal?` on ropes falls back to identity (eq?).
+;;; Dictionaries carry no equality, hashing, or ordering operations. `equal?` on ropes
+;;; falls back to identity (`eq?`).
 
 (require data/rope/core
          racket/vector)
@@ -19,10 +18,8 @@
 (provide (all-defined-out))
 
 ;; ---------------------------------------------------------------------------------------
-;; Dictionaries for the three standard element types
+;; Dictionaries for the three standard element types -- Racket primitives over one chunk each
 ;; ---------------------------------------------------------------------------------------
-;;
-;; Each dictionary is a bundle of Racket primitives over one chunk representation:
 ;;
 ;;   string-dict   -- chunks are strings, elements are chars
 ;;   bytes-dict    -- chunks are bytes, elements are 8-bit exact integers
@@ -30,17 +27,9 @@
 ;;
 ;; `width` is 1 everywhere: each element occupies exactly one index, so width == length.
 ;;
-;; The limits and merge-limits are measured, not guessed -- see benchmarks/limit-sweep.rkt,
-;; which runs the editor pipeline (load, typing, 4-for-4 patches, deletion, paste, lexer
-;; slices and chunk scans, random and sequential access, flatten) over 1 MB, 10 MB, and 100
-;; MB buffers and reports percentiles with samples that straddled a garbage collection
-;; counted separately. All three dictionaries follow one rule, `merge-limit` = `limit`/8.
-;; The chosen configuration is the one whose clean tail -- the p99 over samples that did not
-;; overlap a collection -- is the smallest on the edit path; the read path then costs about
-;; 11% more than the best configuration at 100 K elements and about 25% more at 10 MB on
-;; the bytes shape, which the edit-dominated pipeline accepts. They are tunables, not
-;; invariants, and `merge-limit` must stay <= `limit`: a merged boundary leaf is bounded by
-;; `merge-limit`, and a leaf is bounded by `limit`.
+;; All three follow one rule, `merge-limit` = `limit`/8, measured rather than guessed. The
+;; figures live in M0-notes.org §3.2 rows 8 and 12 and in racket-facts.md §9; the run that
+;; produced them is benchmarks/limit-sweep.rkt, which ranks edits by gc-clean p99.
 ;;
 ;; The two knobs carry different costs, so they are chosen independently:
 ;;
@@ -48,57 +37,30 @@
 ;;   tree a lookup walks. Editing gets cheaper as `limit` shrinks; access gets cheaper as
 ;;   it grows.
 ;;
-;; - `merge-limit` determines when two boundary leaves will merge on concat. Merging less
-;;   pays fewer and smaller copies per edit and keeps the tail low; merging more pays one
-;;   bounded copy and keeps the tree compact. Typing and patching want a small merge limit;
-;;   reads do not care, because a chunk stays bounded by `limit` either way.
+;; - `merge-limit` decides when two boundary leaves merge on concat. Merging less pays
+;;   fewer and smaller copies per edit; merging more pays one bounded copy and keeps the
+;;   tree compact. Typing and patching want a small merge-limit; reads do not care,
+;;   because a chunk stays bounded by `limit` either way.
 ;;
-;; Measured on a 10 MB buffer (nanoseconds, p50 / clean p99), we see string-dict typing
-;; latencies of 536/822 at 512/64 (`limit`/`merge-limit`) versus 1251/2317 at 512/512. The
-;; takeaway is that merging less often is a major latency win for files at this size.
-;; Reading then costs about 10% more than the best configuration: random access 203 ns
-;; against 165 ns at 1024/128 limits. These string figures come from and older 20-window
-;; harness.
-;;
-;; A rerun at 1024 windows measuring `bytes-dict` six times showed that median latency for
-;; typing with 2048/256 limits were 486/928 at 100 K elements and 399/1008 at 10 MB,
-;; against 483/1332 and 396/1036 for 2048/512 limits. Patches, deletes, and pastes were
-;; within each other's noise in the tail. Random access read latencies came in at 24/41
-;; and 88/163. The same six-run reruns on strings showed typing latencies at 512/64 limits
-;; of 544/1080 at 100 K and 515.5/1150.5 at 10 MB, with respective read latencies of
-;; 29/80.5 and 139/219.
-;;
-;; Merging up to `limit` was the worst shape on the edit tail at large sizes -- 6.9-8.5 µs
-;; for gc-clean p99 on patches, deletes, and pastes at 10 MB.
-;;
-;; Copying byte chunks is cheaper than string chunks, so bytes-dict's best `limit` is
-;; larger than string-dict's. On strings, `limit 256` makes typing latency ~11% cheaper
-;; than 512, but reads become ~44% slower at 100 K elements, and `limit 1024` makes reads
-;; ~11% faster there while typing costs 656/1596 ns. 512/64 limits are the sweet spot for
-;; balanced read/write latencies.
-;;
-;; We also saw that retained tree size is dominated by payload. A rope costs about 1.04
-;; bytes per element as bytes and about 4.16 as string characters, of which the tree adds
-;; less than 0.2 bytes per element.
+;; Both are tunables, not invariants, and `merge-limit` must stay ≤ `limit`: a merged
+;; boundary leaf is bounded by `merge-limit`, and a leaf is bounded by `limit`.
 
 (define string-dict (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
                                      #:slice substring #:append string-append
                                      #:width 1 #:limit 512 #:merge-limit 64))
 
-;; bytes-dict follows the same limit/8 rule: 256 of 2048. The first sweep chose limit/4
-;; (512), but a six-run rerun on bytes-dict under the 1024-window harness measured limit/8
-;; with the smaller edit tail at both sizes -- 928 ns against 1332 ns gc-clean p99 typing
-;; at 100 K, and 1008 ns against 1036 ns at 10 MB -- while reads came out equal at 100 K
-;; and 2 ns slower at 10 MB. See M0-notes §3.2 rows 8 and 12.
+;; Byte chunks copy cheaper than string chunks, so bytes-dict takes a larger `limit`. Its
+;; merge-limit moved from `limit`/4 to `limit`/8 on the rerun that measured the smaller edit
+;; tail at both matched sizes. See M0-notes.org §3.2 rows 8 and 12.
 (define bytes-dict (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
-                                  #:slice subbytes #:append bytes-append
-                                  #:width 1 #:limit 2048 #:merge-limit 256))
+                                    #:slice subbytes #:append bytes-append
+                                    #:width 1 #:limit 2048 #:merge-limit 256))
 
-;; vector-dict uses limit 128 with merge-limit 16, roughly following the limit/8 rule
-;; derived from the other two chunk dictionaries (see M0-notes §3.2 row 21).
+;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured frontier for vector
+;; chunks of tokens. See M0-notes.org §3.2 row 21.
 (define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
-                                   #:slice vector-copy #:append vector-append
-                                   #:width 1 #:limit 128 #:merge-limit 16))
+                                     #:slice vector-copy #:append vector-append
+                                     #:width 1 #:limit 128 #:merge-limit 16))
 
 ;; ---------------------------------------------------------------------------------------
 ;; Building a rope from a source value
@@ -136,7 +98,7 @@
   (rope-fold-chunks (λ (i c) (string-copy! out i c) (+ i (string-length c))) 0 ρ)
   out)
 
-;; Returns the bytes of `ρ` as one byte string.
+;; Return the bytes of `ρ` as one byte string.
 (define (rope->bytes ρ)
   (define out (make-bytes (rope-length ρ)))
   (rope-fold-chunks (λ (i c) (bytes-copy! out i c) (+ i (bytes-length c))) 0 ρ)

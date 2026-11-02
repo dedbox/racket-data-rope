@@ -1,0 +1,308 @@
+#+title: a from-scratch design for a comparable rope system
+
+*** 0. The design in one page
+- *One idea.* The rope type is a compile-time index and never a runtime value. Data is
+  uniform and erased. The type-specific part is a tiny record of chunk operations. That
+  record is selected statically. Code is specialized per type only where measurement says
+  it pays.
+- *Four layers, one mechanism each:*
+| Layer      | What it is                                                                                                 | Written as                                      | Per-type cost                             |
+|------------+------------------------------------------------------------------------------------------------------------+-------------------------------------------------+-------------------------------------------|
+| core       | two sealed structs and the tree algorithms (join-based balanced trees, cursors, iteration)                 | ordinary Racket functions, no macros            | none (compiled once, shared by all types) |
+| types      | a /chunk algebra/ of about ten operations, as a compile-time record plus one runtime constant                | =define-rope-type=                                | one record, one dictionary                |
+| operations | generic ops with static type arguments and two compilation modes: shared function, or inlined for one type | =define-rope-op= and a table for the standard ops | none unless =#:inline= is requested         |
+| classes    | records indexed by a rope type, with required and provided operations, superclasses, and instances         | =define-rope-class=, =define-rope-instance=         | per instance, small                       |
+- *What is new compared with the legacy system:*
+  - The 45-member signature collapses to about ten chunk operations. Everything else is
+    library code written once, not "realized" per type.
+  - Ropes carry no type tag, no per-node closure, and no per-type struct. Static typing
+    (§2.2) replaces the runtime evidence that erasure removes.
+  - The default is dictionary passing with static selection. Template instantiation is
+    opt-in per operation.
+  - A class has one kind of field (an operation, with or without a default). Parameters
+    and members are the same concept.
+- *Four decisions that deserve your attention:* the typing discipline (§2.2),
+  dictionary-first (§2.3), dropping eager hashing from the core (§2.1), and removing
+  =equal?= on ropes (§2.5).
+
+*** 1. What the constraints imply
+| Constraint                                          | Consequence                                                                                                                                               |
+|-----------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| C1 every type is a rope type with a fixed signature | The tree code does not depend on the element type. Only chunk-level operations do. So the "signature" is the chunk algebra, not a 45-name interface.      |
+| C2 shared code follows a generic pattern            | Write it once as ordinary functions over the chunk algebra. Do not use templates for it.                                                                  |
+| C3 hierarchy of classes parameterized by rope type  | Type classes (§6): records indexed by a type, resolved statically, with superclasses.                                                                     |
+| C4 generic ops may be inlined                       | Every op has two expansions generated from one body: a shared function taking dictionaries, and an inline macro specialized to one type.                  |
+| C5 static types, checked at compile time            | A small static typing discipline. With erasure it is the *only* safety net, so it is not optional.                                                          |
+| P1 latency                                          | Worst-case O(log n) per operation, no rebuilds, small nodes, no allocation in iteration, bounded memory copies per leaf (§5).                             |
+| P2 smooth experience                                | No type argument at call sites; errors at compile time, in domain terms.                                                                                  |
+| P4 clean code                                       | The core is plain Racket. Macros live in three small modules and are table-driven.                                                                        |
+| full erasure                                        | One pair of structs for every type; type-dependent behavior reaches the data only through statically chosen dictionaries.                                 |
+| nominal types                                       | Keep them. The reason is instances (§2.2): two types may share a representation yet differ in ordering or equality. Provide zero-cost casts between them. |
+
+*** 2. Architecture
+**** 2.1 The erased core (runtime, no macros)
+DONE
+**** 2.2 Types and the typing discipline
+***** The type record
+#+begin_src racket
+(define-rope-type string-rope
+  #:chunk?  string?
+  #:empty   ""
+  #:length  string-length
+  #:ref     string-ref
+  #:slice   substring           ; (chunk start end): Racket's own convention
+  #:append  string-append       ; variadic
+  #:width   1                   ; constant, or (λ (chunk i) units)
+  #:limit   512)                ; maximum chunk length
+#+end_src
+- It expands to a runtime dictionary constant, =(define string-rope:dict (chunk-dict …))=,
+  and a compile-time record bound to the type name by =define-syntax=. The record holds the
+  *syntax* of each primitive (for inlining) and the dictionary identifier (for shared
+  functions).
+- The type name is an ordinary binding. It is exported, imported, prefixed and renamed
+  with the module system; nominal identity is binding identity, never spelling. (The
+  legacy design needed a naming convention, =rope:string=, because the type name collides
+  with =string=.)
+- Equality, hashing and ordering are *not* type primitives; they are classes (§2.4), so a
+  type is exactly "a thing with a chunk algebra". The convenience clause =#:instances=
+  expands to instance definitions.
+***** Nominal types, newtypes, casts
+- =(define-rope-type my-text #:like string-rope)= makes a distinct nominal type with the
+  same representation (same dictionary). =(rope-cast my-text r)= between types that share a
+  representation is free at runtime: it is a type-level re-labelling (compare Breitner et
+  al., "Safe zero-cost coercions for Haskell", 2014).
+- This is the compelling reason for nominal types: =my-text= can have case-insensitive
+  ordering while =string-rope= does not, over the same data. A structural system could not
+  distinguish them.
+- Casts between types with different representations are compile-time errors (use a conversion).
+***** Typing options
+| Level | Discipline                                              | Safety under erasure                               | Experience                                  | Cost                         |
+|-------+---------------------------------------------------------+----------------------------------------------------+---------------------------------------------+------------------------------|
+| T0    | type argument at every call: =(rope-ref string-rope r i)= | none (the argument is trusted)                     | verbose                                     | none                         |
+| T1    | scoped default type plus override                       | none                                               | short in single-type modules                | one syntax parameter         |
+| T2    | static info on bindings, op signatures drive inference  | compile-time, sound for annotated code             | =(rope-ref r i)=; mismatch is a compile error | a small checker (~300 lines) |
+| T3    | embed in Typed Racket                                   | compile-time, plus contracts at untyped boundaries | typed code only; no type-class support      | foreign macro/type interplay |
+- *Accepted: T2*, with T0 as its explicit form (always available) and the *the* / *cast*
+  escape hatches. T0 and T1 leave the erased representation unprotected: wrong-type use
+  either corrupts silently (same representation, different semantics) or fails far from
+  the cause. T3 is attractive for erasure and inference but offers no type-class
+  resolution or per-type specialization; it would still need all of §2.3 and §2.4.
+***** T2, concretely
+- *Static info.* A rope-typed binding is a macro that carries its type: =(define-rope r e)=
+  expands to =(define r* e)= plus =(define-syntax r (rope-binding string-rope #'r*))=. Uses
+  expand to =r*=. Static info also exports across modules like any macro-bound identifier.
+- *Inference by a small, visible grammar, over unexpanded syntax:*
+#+begin_src text
+type-of(e) = the type recorded for an identifier with static info
+           | T                    for (the T e)
+           | apply the signature  for (op e₁ … eₙ), when op is a rope op
+           | error: cannot infer a rope type here; use (the T e)
+#+end_src
+  - No =local-expand=, no syntax properties: predictable, and no dependence on the expander
+    preserving properties ⟦verify⟧. Anything outside the grammar (user macros producing
+    ropes) uses =the=.
+- *Forms:* =define-rope=, =let-rope=, =(define-rope-op (f [a : string-rope] …) : string-rope …)=
+  for functions (a signature with a concrete type is just a monomorphic function), =(the T e)=
+  (unchecked assertion), =(rope-cast T e)= (a runtime-checked boundary for values from
+  untyped code: =rope?= plus one =chunk?= test on the first leaf; with =my-text= it is free).
+- *Errors, at compile time:*
+#+begin_src text
+rope-concat: ropes of different types
+  a : string-rope
+  b : bytes-rope
+rope<?: no instance of total-order for bytes-rope (required by class total-order)
+rope-ref: cannot infer a rope type for (read-rope in); use (the T e)
+#+end_src
+**** 2.3 Operations
+***** One body, two compilation modes
+- The standard ops are a *table*, not 45 hand-written members:
+#+begin_src racket
+(define-rope-ops
+  ;; name        core function   signature               dictionary?
+  [rope-length   core:length     (τ -> fixnum)             #:none]
+  [rope-concat   core:concat     (τ τ -> τ)                #:dict]
+  [rope-slice    core:slice      (τ fixnum fixnum -> τ)    #:dict]
+  [rope-ref      core:ref        (τ fixnum -> elem)        #:dict #:fast-path leaf-ref])
+#+end_src
+  Each row defines one macro: infer τ from the arguments, check that all τ arguments
+  agree, and expand to =(core:concat string-rope:dict a b)=. The signature gives arity
+  checking and result typing for free.
+- *User-defined ops* use =define-rope-op=. The body is written once:
+#+begin_src racket
+(define-rope-op (rope-count [r : τ] x) : fixnum #:inline
+  (for/fold ([n 0]) ([e (in-rope r)])
+    (if (τ.elem=? e x) (add1 n) n)))
+#+end_src
+  - *Function mode (default):* a shared function =(rope-count/dict τ r x)= taking the
+    dictionary; ~τ.elem=?~ expands to a dictionary access.
+  - *Inline mode (=#:inline=):* a macro that splices the body with τ static; ~τ.elem=?~
+    expands to ~char=?~ itself, and =in-rope= to a specialized loop.
+- *How one body yields both:* =τ.op= is an accessor macro that checks whether τ is
+  statically a type (then: the primitive, as syntax) or a variable holding a dictionary
+  (then: a runtime accessor). The same text compiles correctly in either mode. This
+  replaces the legacy =star-substitute= and =τ.key= binding machinery with one small macro,
+  because the set of accessible names is only the chunk algebra and the class's required
+  operations.
+- *Hybrid fast paths for hot operations:* =rope-ref= inlines the leaf case and shares the
+  rest: =(if (leaf? r) (τ.ref (leaf-chunk r) i) (core:ref dict r i))=. Chunk operations then
+  cost an indirect call only on non-leaf paths. The general rule: inline the leaf case,
+  share the tree walk.
+- =#:specialize= (later): lift a per-type function once per module instead of copying at
+  each call site. ⟦verify⟧ needs a module-level memo table at compile time; the
+  encapsulated mutation is acceptable there.
+***** Sequences and loops
+- =in-rope=, =rope-foldl=, =for/rope= are single generic macros with static inference, defined
+  with =define-sequence-syntax=. Because the generic =in-rope= is itself the identifier the
+  =for= clause sees, there is no per-type alias to lose the fast path. (This is the problem
+  you found in V4, caused by aliasing a per-type sequence name through a rename
+  transformer.) A typed binding could also act as a sequence expander, specializing
+  =(for ([c doc]) …)=; ⟦verify⟧ whether the sequence-syntax protocol allows an identifier
+  macro with static info to take that role.
+**** 2.4 Classes
+***** One concept
+- A class is a record schema indexed by a rope type: *operations*, some required, some with
+  defaults (overridable), some provided. Instances fill the required operations. There is
+  no separate notion of "parameter" and "member" (carve B from the earlier discussion),
+  and no import clause: a class reaches another class through its ops. No legacy class grammar is carried over (§4.1, ADR-008): this
+  design stands on its own.
+#+begin_src racket
+(define-rope-class (equality τ)
+  [elem=?  : (elem elem -> boolean)  #:default equal?]
+  (define-rope-op (rope=? [a : τ] [b : τ]) : boolean … ))
+
+(define-rope-class (total-order τ) #:extends (equality)
+  [elem<? : (elem elem -> boolean)]
+  [elem>? : (elem elem -> boolean)]
+  [chunk-compare : (chunk chunk fixnum fixnum fixnum -> ordering) #:default (λ (c d i j k) …)]
+  (define-rope-op (rope-compare [a : τ] [b : τ]) : ordering #:overridable …)
+  (define-rope-op (rope<? [a : τ] [b : τ]) : boolean (eq? (rope-compare a b) '<)))
+
+(define-rope-instance (total-order string-rope)
+  [elem<? char<?] [elem>? char>?])
+#+end_src
+- *Signatures replace syntax classes.* =(elem elem -> boolean)= declares the arity and role
+  of an operation. An instance is checked against the arity (a λ literal statically; an
+  identifier at instantiation time by =procedure-arity-includes?=, once, not on a hot path).
+  Uses =(τ.elem<? a b)= are checked against the same signature, which gives the arity
+  checking you asked for.
+***** Hierarchy and resolution
+- =#:extends= is a superclass: an instance of the subclass requires an instance of each
+  superclass for the same type (checked at instance definition), and the subclass's
+  operations may call superclass ops and required operations without any import clause.
+- Instances are module-level bindings; coherence is enforced by the module system (two
+  visible instances for the same pair conflict at =require=).
+- The instance for an op call is found by the *type's own name*, resolved from descriptors
+  rather than from user spelling, in the lexical context of the expansion.
+***** Dictionaries and inlining
+- A class dictionary is a generated sealed struct with one field per operation and a
+  pointer to its superclasses and the type dictionary. A provided op in function mode
+  takes one argument, the class dictionary. In inline mode its body is spliced with the
+  instance's operations as syntax. So an instance that supplies =char<?= gets =char<?= inlined
+  into =rope<?=, with no per-class machinery beyond what =define-rope-op= already provides.
+***** Types are instances of a root class
+- The chunk algebra is the root class =chunks=; =define-rope-type= defines a type and its
+  =chunks= instance in one step. Classes have it as an implicit superclass, which is why
+  =τ.ref= and friends are always available. This is the "types are instances of a root
+  class" carve from the previous discussion, here adopted from the start.
+**** 2.5 Erasure, escape hatches, and what is given up
+| Item                                       | Treatment                                                                                                                                    |
+|--------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------|
+| type tag, equal-function, per-type structs | gone; there is no runtime evidence of a rope's type                                                                                          |
+| =equal?= on ropes                            | not supported: it falls back to =eq?=. Use ~rope=?~. (A type-agnostic =equal?= would need the dictionary, i.e. a tag.)                             |
+| printing                                   | =prop:custom-write= prints ~#<rope len=N>~; =(rope->source r)= gives the content                                                                   |
+| values from untyped code                   | =(rope-cast T v)=: structural check, one =chunk?= test                                                                                           |
+| *debug build*                                | compile-time switch: each root carries a type tag and every op asserts it; catches mistakes in =the= and casts. Off in production, on in tests |
+| first-class ops                            | structural ops (=rope-length=) are plain functions. Type-dependent ones are macros; =(rope-ref/τ string-rope)= yields a procedure                |
+| serialization                              | per type: =rope->source= and =source->rope=; no generic format                                                                                   |
+
+*** 3. The language, by example
+#+begin_src racket
+#lang racket
+(require rope rope/string)                          ; string-rope, string->rope, rope->string
+
+(define-rope doc  (string->rope "hello world"))     ; doc : string-rope
+(define-rope doc2 (rope-concat (rope-slice doc 0 5) (string->rope ", rope")))
+
+(rope-ref doc2 1)                                   ; #\e: leaf fast path inlined, tree walk shared
+(for ([c (in-rope doc2)]) (display c))              ; specialized loop, no dictionary
+(rope<? doc doc2)                                   ; instance of total-order for string-rope, found statically
+(rope-concat doc (the bytes-rope b))                ; compile error: ropes of different types
+
+;; a nominal variant over the same data
+(define-rope-type my-text #:like string-rope)
+(define-rope-instance (total-order my-text) [elem<? char-ci<?] [elem>? char-ci>?])
+(define-rope doc3 (rope-cast my-text doc))          ; free
+
+;; a hot generic operation
+(define-rope-op (rope-count [r : τ] x) : fixnum #:inline
+  (for/fold ([n 0]) ([e (in-rope r)]) (if (τ.elem=? e x) (add1 n) n)))
+#+end_src
+- Nothing in user code mentions a dictionary, a realized name, or a type argument, except
+  in annotations and casts.
+
+*** 4. Racket mechanics, and where the risk is
+| Part                       | Mechanism                                                                                                                     | Risk                                                                             |
+|----------------------------+-------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------|
+| type record and dictionary | =define-syntax= with a struct value; one module-level =define=                                                                    | low                                                                              |
+| static info on bindings    | identifier macro (=prop:procedure=) with =syntax-local-value=                                                                     | low: the standard mechanism of =struct= ids                                        |
+| inference                  | recursive function over unexpanded syntax, driven by op signatures                                                            | medium: the grammar must stay small; error messages carry the design's usability |
+| standard ops               | one table macro, one macro per row                                                                                            | low                                                                              |
+| dual-mode =τ.op=             | accessor macro dispatching on =(syntax-local-value τ)=                                                                          | medium: must work inside nested macros and =for= bodies                            |
+| =#:inline= ops             | re-expand the stored body syntax at each call; static τ                                                                       | low (it is what the legacy ops do)                                               |
+| classes, instances         | =define-syntax= records with a generated dictionary struct; instances bound by name                                             | medium: instance visibility is lexical (as before)                               |
+| unsafe core                | =(#%declare #:unsafe)= plus a safe/unsafe shim                                                                                  | medium: needs property tests that run the same code in safe mode                 |
+| specialization (later)     | module-level lift with a memo table                                                                                           | medium                                                                           |
+| avoided on purpose         | =local-expand= of arguments, syntax properties as a protocol, runtime dispatch, per-type template instantiation of library code | removes the main sources of expansion-time cost and fragility                    |
+
+**** 4.1 Anti-patterns the legacy macro system proved
+The legacy library's star expansion failed in ways this design must not repeat. They are
+requirements on the new macro layer, not features to port: the legacy implementation is not
+retained and no compatibility is intended (ADR-001, ADR-006, ADR-008).
+
+- Names resolve by *binding identity*, never by spelling. Textual substitution over every
+  identifier clobbered binders and captured call-site arguments.
+- A minted identifier carries its origin syntax (=format-id= from the source's context), so errors
+  and jumps point at real code. Regex-minted names had no provenance and resolved in the caller's
+  scope.
+- One validation point per expansion. Three validation times made errors arrive in the wrong order
+  and let clashing names go unnoticed.
+- Clash detection, plus a did-you-mean hint on an unknown member key, checked once from the table.
+- No ambient names in a member or op body: only =τ=, the keys the template uses, parameter names
+  and ordinary module scope. The legacy system leaked =κ=, =τ= and every member into every body.
+- A parameter expression is evaluated once, not at every call site.
+- Instance lookup reads the *lookup site* -- the module where work started -- not the spelling of
+  the type identifier. Order-dependent instance discovery is a bug, not a convention.
+- No alias indirection for sequence members: aliasing a per-type sequence name through a rename
+  transformer lost the =:do-in= fast path of =for= (legacy V4). One generic =in-rope= with static
+  inference instead (ADR-007).
+- Compile time and expansion size are measured, never assumed (legacy V5 was never measured).
+- IDE ergonomics: identifiers minted by =format-id= draw no DrRacket arrows (legacy V6), so rely on
+  domain-level error messages rather than on editor navigation.
+
+*** 5. Latency plan
+**** 5.1 Design choices that bound latency
+- Worst-case O(log n) for index, split, concat, slice, splice; path copying allocates
+  O(log n) nodes, each six words.
+- Chunk limit bounds the largest copy per operation (a 512-element string chunk is about 2 KB).
+- No rebuilds, no global rebalancing, no hash maintenance; no per-node closures to
+  allocate or trace.
+- Iteration and cursors allocate nothing per element.
+- Compile time is flat in the number of ops: nothing is instantiated per type unless requested.
+
+*** 6. Names in the literature
+| Concept here                       | Established names                                                                                                                                       |
+|------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| class and instance                 | type class (Wadler and Blott, 1989); modular type classes (Dreyer, Harper, Chakravarty, Keller, 2007); Scala implicits (Oliveira, Moors, Odersky, 2010) |
+| dictionary with static selection   | dictionary passing; evidence; resolution at compile time                                                                                                |
+| per-type specialization (=#:inline=) | monomorphization; specialization (Rust, C++)                                                                                                            |
+| chunk algebra                      | a module signature (ML); a type class with required members                                                                                             |
+| type as a compile-time index       | phantom type; indexed family; nominal type                                                                                                              |
+| zero-cost cast between types       | newtype and coercion (Breitner et al., 2014)                                                                                                            |
+| tree with cached measures          | measured tree (Hinze and Paterson, finger trees, 2006); rope (Boehm, Atkinson, Plass, 1995)                                                             |
+| join-based balance                 | Blelloch, Ferizovic, Sun (2016)                                                                                                                         |
+| static info on bindings            | Rhombus static information (Flatt et al., 2023) ⟦verify⟧                                                                                                |
+| types erased at runtime            | Typed Racket (types erased after checking)                                                                                                              |
+| trait-style member defaults      | traits (Schärli et al., 2003) -- as a name only: ADR-008 rejects trait-composition operators   |
+| chunk algebra as an interface    | Racket unit signatures (Flatt and Felleisen, 1998)                                            |
+| instance coherence               | coherence and evidence selection (Bottu et al., 2019)                                         |
+| wide-node fan-out layouts        | wide/fan-out rope designs in editor implementations (Xi's editor, Ropey) ⟦verify⟧             |

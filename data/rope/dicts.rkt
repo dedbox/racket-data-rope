@@ -28,7 +28,7 @@
 ;; `width` is 1 everywhere: each element occupies exactly one index, so width == length.
 ;;
 ;; All three follow one rule, `merge-limit` = `limit`/8, measured rather than guessed. The
-;; figures live in M0-notes.org §3.2 rows 8 and 12 and in racket-facts.md §9; the run that
+;; figures live in notes/m0.org §3.2 rows 8 and 12 and in racket-facts.md §9; the run that
 ;; produced them is benchmarks/limit-sweep.rkt, which ranks edits by gc-clean p99.
 ;;
 ;; The two knobs carry different costs, so they are chosen independently:
@@ -51,13 +51,13 @@
 
 ;; Byte chunks copy cheaper than string chunks, so bytes-dict takes a larger `limit`. Its
 ;; merge-limit moved from `limit`/4 to `limit`/8 on the rerun that measured the smaller edit
-;; tail at both matched sizes. See M0-notes.org §3.2 rows 8 and 12.
+;; tail at both matched sizes. See notes/m0.org §3.2 rows 8 and 12.
 (define bytes-dict (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
                                     #:slice subbytes #:append bytes-append
                                     #:width 1 #:limit 2048 #:merge-limit 256))
 
 ;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured frontier for vector
-;; chunks of tokens. See M0-notes.org §3.2 row 21.
+;; chunks of tokens. See notes/m0.org §3.2 row 21.
 (define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                                      #:slice vector-copy #:append vector-append
                                      #:width 1 #:limit 128 #:merge-limit 16))

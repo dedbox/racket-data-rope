@@ -1,12 +1,12 @@
 #lang racket/base
 
 ;;; benchmarks/limit-sweep.rkt -- the measurement that decides the shipped #:limit and
-;;; #:merge-limit values (ADR-019, M0-notes.org §3.2 rows 8, 12, and 21).
+;;; #:merge-limit values (ADR-019, notes/m0.org §3.2 rows 8, 12, and 21).
 ;;;
 ;;; The winner, recorded here so a rerun can be compared against it: string-dict 512/64,
 ;;; bytes-dict 2048/256, vector-dict 128/16 -- all three at `merge-limit` = `limit`/8, which
 ;;; is what makes typing and patching cheap. The edit-dominated pipeline accepts a read
-;;; path a few percent over its best. Per-run percentiles live in M0-notes.org §3.2 and in
+;;; path a few percent over its best. Per-run percentiles live in notes/m0.org §3.2 and in
 ;;; racket-facts.md §9.
 ;;;
 ;;; === The workload ===
@@ -19,7 +19,7 @@
 ;;;
 ;;; === Bare-run defaults ===
 ;;;
-;;; With elem=token the ladder is re-based per M0-notes.org §3.1 Q3 (R4): token counts of
+;;; With elem=token the ladder is re-based per notes/m0.org §3.1 Q3 (R4): token counts of
 ;;; 140 / 1400 / 7000 / 30000 / 70000, i.e. ~1-10 kilochars typical (~140-1400 tokens at
 ;;; 5-10 chars/token), 20-50 K chars large (~7000 tokens), a few hundred kilochars at stress
 ;;; (~30-70 K tokens). Limits sweep 32/64/128/256/512 with merge-limit at limit/8, limit/4,
@@ -115,7 +115,7 @@
   ρ)
 
 ;; ---------------------------------------------------------------------------------------
-;; Token-pipeline operations -- vector chunks of token structs (M0-notes.org §3.1 Q4)
+;; Token-pipeline operations -- vector chunks of token structs (notes/m0.org §3.1 Q4)
 ;; ---------------------------------------------------------------------------------------
 ;;
 ;; Token chunks come from limit-harness.rkt, not from this file. Replacing rather than
@@ -265,7 +265,7 @@
 ;; Return the analytic retained size of a rope in bytes per element: chunk payload plus
 ;; the tree over it. Nodes number leaves-1, which is what `chunk->rope` builds. The layout
 ;; constants -- per-leaf and per-node size, per-element chunk payload -- come from
-;; racket-facts.md §2 and M0-notes.org §3.2 row 10.
+;; racket-facts.md §2 and notes/m0.org §3.2 row 10.
 (define (retained-per-elem elem size leaves)
   (define payload (cond [(eq? elem 'bytes) size]
                         [(eq? elem 'token) (* size 40)]
@@ -338,7 +338,7 @@
 
 ;; Resolve a merge-limit expression: `limit` means `limit`, `limit/2` means `limit`/2, and a
 ;; literal number stands on its own. Never above the leaf limit, which would break the leaf
-;; invariant (M0-notes.org §1.3, invariant 1).
+;; invariant (notes/m0.org §1.3, invariant 1).
 (define (merge-of expr limit)
   (cond [(string=? expr "limit") limit]
         [(string=? expr "limit/2") (quotient limit 2)]

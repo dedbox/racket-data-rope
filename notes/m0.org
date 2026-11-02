@@ -1,4 +1,5 @@
 #+title: rope system from scratch: consolidated design record
+#+date: 2026-11-01
 #+subtitle: scope = the independent, from-scratch design and its first milestone (M0). Rounds: R1 = from-scratch design, R2 = your answers, R3 = M0 build-out, R4 = shipping decisions.
 
 *** Status legend
@@ -198,7 +199,7 @@
 ***** ADR-008 Classes as typed records of operations
 - Status :: Proposed; re-reviewed fresh for the new system. No legacy class convention is
   carried over (§3.3 Q14): backward compatibility is not a goal and the legacy design is not
-  retained. Only the failure list -- now =redesign-overview.org= §4.1 -- is worth keeping.
+  retained. Only the failure list -- now =notes/overview.org= §4.1 -- is worth keeping.
 - Problem :: The legacy class design needed parameters, members, imports and ambient
   names; ordinary languages have a single concept.
 - Decision :: A class is a record schema indexed by a rope type. It has one kind of field:
@@ -388,7 +389,7 @@
 ****** Experiment protocol (Proposed)
 Runs the experiment to a decision; answers §3.1 Q5 by gating implementation on
 measurement rather than on hope. Budget: Phase 0 half a day (runs and report), Phase 1
-half a day, Phases 2 and 3 together one day, Phase 4 half a day, Phase 5 one =M0-notes.org=
+half a day, Phases 2 and 3 together one day, Phase 4 half a day, Phase 5 one =notes/m0.org=
 edit; total ≤ 2 working days.
 
 | Phase | Work                                                    | Gate                                                          |
@@ -518,7 +519,7 @@ Phase 5 writes one of:
   =raco test tests/= passes 114 tests (66 in =core-tests.rkt=, 48 in =dicts-tests.rkt=), and both
   =raco setup --no-info-domain --no-docs --pkgs data-rope= and =raco setup --pkgs data-rope=
   finish without errors. (b) Re-pin §3.2 row 12 on the bytes shape under the current harness -- done 2026-10-31,
-  six runs at =bytes/2048/256=; those ceilings gate M1 and M3. (c) The three decisions recorded in =M1-notes.org= §13 rows 7-9 --
+  six runs at =bytes/2048/256=; those ceilings gate M1 and M3. (c) The three decisions recorded in =notes/m1.org= §13 rows 7-9 --
   contract policy, chunk ownership, whether a token type ships -- are M1's own choices, not M0 exit
   criteria: they stay open there and do not gate this close-out. (d) Terminology drift
   fixed: =sig= -> =dict= throughout this file (ADR-001, ADR-018, ADR-019, §3.2 rows 8 and 21, §4's
@@ -558,7 +559,7 @@ Phase 5 writes one of:
 |  # | Question                                                                                                                                                                                                    |  Affects |
 |----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------|
 | 13 | Answered (R4): no — equality and hashing are class operations outside the core, never core primitives. The legacy requirement came from packrat-style memoization-heavy lexer/parser versions that synchronized three ropes (text, token, cst) plus a derived AST in real time; the new architecture deliberately avoids that level of cooperation between distinct libraries, so the assumption holds by design. If it is ever violated, the entire architecture is reconsidered, not just this ADR.                                                  |      010 |
-| 14 | Answered: no. The legacy class grammar (=#:params-from=, =#:realize=, =#:op=, =#:private=, instance headers) is not carried over -- no backward compatibility is intended and the legacy design is not retained. ADR-008 stands on its own decision text; what survives from the legacy thread is the anti-pattern list in =redesign-overview.org= §4.1, not the grammar. |      008 |
+| 14 | Answered: no. The legacy class grammar (=#:params-from=, =#:realize=, =#:op=, =#:private=, instance headers) is not carried over -- no backward compatibility is intended and the legacy design is not retained. ADR-008 stands on its own decision text; what survives from the legacy thread is the anti-pattern list in =notes/overview.org= §4.1, not the grammar. |      008 |
 | 15 | Can typed bindings act as sequence expanders, so that =(for ([c doc]) …)= is specialized?                                                                                                                     |      007 |
 | 16 | What is the exact inference grammar of T2 (which forms propagate types), and how are user macros that produce ropes handled?                                                                                |      003 |
 | 17 | Answered (R4): per §3.3 Q18's byte anchoring, offset<->index degenerates trivially — byte positions ARE element indices, so the core ships no width-to-index search; codepoint mapping lives at the UI boundary as bounded scans. Cursors remain deferred to M1 as conveniences over the spine descent.                                                                                   | 009, 017 |

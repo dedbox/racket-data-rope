@@ -9,6 +9,7 @@ Read `racket-facts.md` first: it records hard lessons learned that save time.
 
 * Primary sources: `data/rope/`, `data/rope.rkt`
 * Docs: `data/rope/scribblings/` · Tests: `tests/` · Benchmarks: `benchmarks/`
+* Design notes: `notes/*.org` · Lessons learned: `racket-facts.md`
 
 ## Commands
 
@@ -46,7 +47,7 @@ rackunit hierarchy: `test-suite` definitions with `test-case`s at the leaves.
 
 Three tiers: module header, section header, definition doc. Applies to `data/rope/`, `tests/`, and
 `benchmarks/`; `benchmarks/dev-shim/` mirrors the oracle library and is exempt. The rules cover
-Racket comments and `*.org` notes, not markdown.
+Racket comments and `notes/*.org`, not markdown.
 
 ### Dividers
 
@@ -77,11 +78,11 @@ Racket comments and `*.org` notes, not markdown.
 ### Never in source
 
 * Roadmap and layer talk: no unwritten layers (types, ops, classes), no architecture tables. Those
-  live in the `*.org` notes.
+  live in `notes/*.org`.
 * Speculative maintenance advice ("keep it that way", "in case the representation changes"). State
   the invariant instead.
-* Measured figures. Numbers live in `M0-notes.org` §3.2 and `racket-facts.md`; the source keeps the
-  decision and the rule, then cites (`See M0-notes.org §3.2 row 8.`). Re-pinning a ceiling must
+* Measured figures. Numbers live in `notes/m0.org` §3.2 and `racket-facts.md`; the source keeps the
+  decision and the rule, then cites (`See notes/m0.org §3.2 row 8.`). Re-pinning a ceiling must
   touch the notes and one pointer, not three files of prose.
 * Any fact stated twice: a section-wide fact appears in the section header only. Keep every ADR id
   and notes row that constrains the code -- delete prose, never pointers.
@@ -97,7 +98,7 @@ Racket comments and `*.org` notes, not markdown.
   rope". Comment names match the code's names (`l`, `r`, `ρ′`).
 * Bold (`**runtime**`) marks a term being defined, at most once per module; no italics.
 * Cite papers as `Blelloch, Ferizovic & Sun (2016)` -- authors and year, no title. Project evidence
-  as `ADR-019`, `M0-notes.org §3.2 row 8`, `benchmarks/limit-sweep.rkt`; keep the `.org` suffix and
+  as `ADR-019`, `notes/m0.org §3.2 row 8`, `benchmarks/limit-sweep.rkt`; keep the `.org` suffix and
   the `e.g.,` / `i.e.,` forms.
 * Hedge claims to the regime measured (`at 10 MB`, `for files at this size`); never `always`, never
   `the biggest win in this file`.
@@ -109,25 +110,53 @@ Racket comments and `*.org` notes, not markdown.
   grep -rn --include='*.rkt' -E '^ *(;;;?)[[:space:]]+(Returns|Builds|Concatenates|Replaces)' \
     data/rope tests benchmarks                                            # imperative mood
   grep -rn --include='*.rkt' -E '^ *(;;;?)[[:space:]]+\* ' data/rope tests benchmarks  # lists use -
-  grep -rn --include='*.rkt' 'M0-notes[^.o]' data/rope tests benchmarks    # cite the .org file
+  grep -rn --include='*.rkt' -oE '[A-Za-z0-9./-]+\.org' data/rope tests benchmarks | grep -v 'notes/'
+  grep -rnE --include='*.rkt' 'notes/[a-z0-9-]+([^.A-Za-z0-9-]|$)' \
+    data/rope tests benchmarks                                  # cite notes/<key>.org in full
   awk '/^ *(;;;?)/ && length($0) > 93' data/rope/*.rkt tests/*.rkt benchmarks/*.rkt
   ```
 
 ## Typography
 
-Applies to Racket source and `*.org` alike: `λ` not `lambda`; ASCII `->`, never unicode arrows; no
-LaTeX unless a formula cannot be expressed in Unicode; Greek letters (`τ`, `σ`, `ρ`, `α`) are fine.
-Comments may use `≤` and `≥` (they are typography like Greek letters); code keeps `<=` and `>=`. `→`
-appears only inside notation lines (`slice -- chunk nat nat → chunk`) and `⇒` only in
-`Precondition:` lines; prose keeps ASCII `->`.
+Applies to Racket source and `notes/*.org` alike: `λ` not `lambda`; ASCII `->`, never unicode
+arrows; no LaTeX unless a formula cannot be expressed in Unicode; Greek letters (`τ`, `σ`, `ρ`,
+`α`) are fine. Comments may use `≤` and `≥` (they are typography like Greek letters); code keeps
+`<=` and `>=`. `→` appears only inside notation lines (`slice -- chunk nat nat → chunk`) and `⇒`
+only in `Precondition:` lines; prose keeps ASCII `->`.
 
-## Org-mode markup
+## Design notes
 
-Design notes are `*.org` at the project root (`redesign-overview.org`, `M0-notes.org`,
-`M1-notes.org`). These rules apply to those files only, not to markdown.
+Design notes are `notes/*.org`. `racket-facts.md` stays at the root. These rules apply to those
+files only, not to markdown.
+
+### File names
+
+`notes/<key>[-<topic>].org`: lowercase, words joined by `-`, no `-notes` suffix (the directory
+already names the kind). The keys are a closed set; adding a key is a decision, not a habit.
+
+| Key | Example | Holds |
+|-----|---------|-------|
+| `overview` | `overview.org` | the design in one page: layers and the decisions worth review, no measurements |
+| `m<N>` | `m0.org`, `m1.org` | one milestone's design record: scope, decisions, exit gates, measured ceilings |
+| `adr-<NNN>` | `adr-019.org` | a decision that outgrew its row in a milestone table |
+| `bench-<topic>` | `bench-avl-vs-treap.org` | a measurement write-up that outlives the milestone that ran it |
+| `spike-<topic>` | `spike-typing.org` | a throwaway investigation; folded into a milestone file, then deleted |
+
+- One idea per file. A milestone record that outgrows its sections splits as `m<N>-<topic>.org`
+  (`m2-typing.org`); the split carries the section numbering with the text it moves.
+- Section numbers (§3.2) and table row numbers are permanent. Re-point a citation when text moves
+  between files; never renumber a target another file cites.
+- A note is created in the same pass as the decision it records, and is cited from source by full
+  path (`notes/m0.org §3.2 row 8`). Nothing else lives here -- no markdown, no index, no
+  transcripts: the key scheme is the catalogue, so a file is found by its key and by the notes
+  that cite it.
+
+### Markup
 
 * Headings: one `*` per depth level, never skipping a level. First line of the file is `#+title:`,
   plus `#+subtitle:` when useful.
+* `#+date:` records the last decision pass, and a milestone file carries it. Update it whenever
+  that file gains or signs off a decision, so a stale gate is visible without reading the body.
 * Code listings go in `#+begin_src racket … #+end_src`. Reserve `#+begin_src text` for non-source
   content such as an inference grammar or a compile-time error message.
 * Inline code: `=chunk-dict=` for names with no literal `=`; use `~` for quotes (`~elem<?~`) and for

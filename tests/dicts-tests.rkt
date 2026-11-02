@@ -153,7 +153,7 @@
         ;; A leaf is bounded by `limit`, and a merged boundary leaf by `merge-limit`, so
         ;; the leaf invariant `rope-valid?` checks holds only while merge-limit ≤ limit.
         ;; Every shipped dict declares a merge-limit below its limit; only the default
-        ;; fill makes the two equal. All three follow the limit/8 rule (M0-notes.org §3.2
+        ;; fill makes the two equal. All three follow the limit/8 rule (notes/m0.org §3.2
         ;; row 8).
         (for ([σ (in-list dicts)] [limit (in-list limits)] [merge-limit (in-list merge-limits)])
           (check-equal? (chunk-dict-merge-limit σ) merge-limit)

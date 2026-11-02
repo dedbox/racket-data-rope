@@ -26,7 +26,7 @@
 (provide (all-defined-out))
 
 ;; ---------------------------------------------------------------------------------------
-;; Token elements -- vector chunks of immutable token structs (M0-notes.org §3.1 Q4)
+;; Token elements -- vector chunks of immutable token structs (notes/m0.org §3.1 Q4)
 ;; ---------------------------------------------------------------------------------------
 ;;
 ;; Token ropes are vector chunks of immutable token structs, each carrying its own relative
@@ -36,7 +36,7 @@
 ;; benchmark, not in data/rope.
 (struct token (kind width span))
 
-;; Build the deterministic token for index `i`, mirroring M0-notes.org §3.1 Q3: char widths
+;; Build the deterministic token for index `i`, mirroring notes/m0.org §3.1 Q3: char widths
 ;; of 5-10, a span that advances past one separator, a small kind tag. Same multiplicative
 ;; step as the pseudo-offsets, so token text and edit positions are reproducible without a
 ;; mutable PRNG.

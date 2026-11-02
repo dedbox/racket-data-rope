@@ -164,9 +164,9 @@ Trends that matter for future decisions: typing latency grows ~linearly with `li
 p50, 1024 → 1642, 16384 → 14494); `randref` improves with `limit` (221 → 124 ns); string `scan`
 favors smaller `limit`, bytes `scan` favors larger; `merge-limit` below `limit` roughly halves
 typing latency and lowers the clean tail; `flat`/`load` are insensitive to both knobs. All three
-shipped dictionaries now declare `merge-limit` = `limit`/8 (`M0-notes.org` §3.2 row 8).
+shipped dictionaries now declare `merge-limit` = `limit`/8 (`notes/m0.org` §3.2 row 8).
 A bytes rope costs ~1.04 bytes/elem vs ~4.16 for a string rope, and byte edits are cheaper —
-relevant to `M0-notes.org` §3.3 Q18 (string chunks vs UTF-8 byte chunks).
+relevant to `notes/m0.org` §3.3 Q18 (string chunks vs UTF-8 byte chunks).
 
 ## 10. Environment facts behind the conventions
 

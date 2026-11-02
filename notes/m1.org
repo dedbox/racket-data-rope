@@ -1,18 +1,18 @@
 #+title: milestone M1 -- the type layer and the standard-operation table
 #+date: 2026-10-31
-#+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =M0-notes.org= §1.5, §3.2, §3.3; =redesign-overview.org= §2.2-§2.3.
+#+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =notes/m0.org= §1.5, §3.2, §3.3; =notes/overview.org= §2.2-§2.3.
 
 ** 0. Status legend
 | Tag      | Meaning                                             |
 |----------+-----------------------------------------------------|
-| Accepted | carried over from an ADR in =M0-notes.org=            |
+| Accepted | carried over from an ADR in =notes/m0.org=            |
 | Proposed | recommended here; not yet reviewed                  |
 | ⟦verify⟧ | needs a spike or a measurement before it is trusted |
 
 ** 1. Terminology, and where the legacy system sits
 - *Terminology.* The shipped names are dictionary names: =chunk-dict= in =data/rope/core.rkt=, and
   =string-dict= / =bytes-dict= / =vector-dict= in =data/rope/dicts.rkt= (commit =982271a=, "rename
-  chunk signatures to chunk dictionaries"). The stale =sig= spellings in =M0-notes.org= are now corrected (ADR-001, ADR-018, ADR-019,
+  chunk signatures to chunk dictionaries"). The stale =sig= spellings in =notes/m0.org= are now corrected (ADR-001, ADR-018, ADR-019,
   §3.2 rows 8 and 21, §4's intro) in the pass that added ADR-025, and §1.2 and §1.3 there write
   =length= as =core.rkt= does. The code names above are the ones M1 builds on,
   and a type's runtime constant is named =τ:dict= by convention, e.g. =string-rope:dict=.
@@ -20,7 +20,7 @@
   and serves only as the oracle for differential content tests and latency comparison (§1.6).
   None of its design is retained: M1 replaces per-type realization of a 45-member interface with
   dictionary passing, and the only lessons worth keeping are the anti-pattern list in
-  =redesign-overview.org= §4.1.
+  =notes/overview.org= §4.1.
 
 ** 2. What M1 contains
 - *One idea.* M1 makes a rope type an ordinary module binding that is *both* a compile-time index
@@ -223,7 +223,7 @@ rope-concat: ropes of different types
   not a rewrite.
 - The accessible key set is exactly =type-keys=, which is why no substitution machinery is needed --
   this is the small replacement for the legacy =star-substitute= and =τ.key= binding machinery.
-- ⟦verify⟧ two risks named in =redesign-overview.org= §4: =syntax-local-value= must see the *caller's*
+- ⟦verify⟧ two risks named in =notes/overview.org= §4: =syntax-local-value= must see the *caller's*
   lexical context (pass the op's syntax down, do not rewalk), and the accessor must work inside
   nested macros and =for= bodies.
 - =#:specialize= (the module-level lift, §3.3 Q20) is M6, not M1.
@@ -294,10 +294,10 @@ rope-concat: ropes of different types
 2. =ops.rkt= with the =#:none= rows only, then add the =#:dict= rows -- re-run
    =tests/core--ops-tests.rkt= after each step.
 3. =string.rkt=, =bytes.rkt=, then the collector =data/rope.rkt=.
-4. Sweep and re-pin; record the outcome in =M0-notes.org= (§1.5 M1, §3.2 rows 6 and 12).
+4. Sweep and re-pin; record the outcome in =notes/m0.org= (§1.5 M1, §3.2 rows 6 and 12).
 5. ADR-025 is signed off (2026-11-01): §3.2 row 12 is pinned on both shapes -- =bytes/2048/256=
    and =string/512/64= -- so each M1 type module has a ceiling to gate against, and the terminology
-   drift in =M0-notes.org= is fixed. M0 is closed; the gates read those ceilings.
+   drift in =notes/m0.org= is fixed. M0 is closed; the gates read those ceilings.
 
 ** 13. Open decisions
 | # | Question | Affects |

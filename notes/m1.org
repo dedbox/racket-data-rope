@@ -1,5 +1,5 @@
 #+title: milestone M1 -- the type layer and the standard-operation table
-#+date: 2026-10-31
+#+date: 2026-11-02
 #+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =notes/m0.org= §1.5, §3.2, §3.3; =notes/overview.org= §2.2-§2.3.
 
 ** 0. Status legend
@@ -290,14 +290,9 @@ rope-concat: ropes of different types
   (ADR-021's revisit note says the same).
 
 ** 12. Build order
-1. =private/type-stx.rkt= + =type.rkt=: compile, smoke-test one type in =tests/type-tests.rkt=.
-2. =ops.rkt= with the =#:none= rows only, then add the =#:dict= rows -- re-run
-   =tests/core--ops-tests.rkt= after each step.
-3. =string.rkt=, =bytes.rkt=, then the collector =data/rope.rkt=.
-4. Sweep and re-pin; record the outcome in =notes/m0.org= (§1.5 M1, §3.2 rows 6 and 12).
-5. ADR-025 is signed off (2026-11-01): §3.2 row 12 is pinned on both shapes -- =bytes/2048/256=
-   and =string/512/64= -- so each M1 type module has a ceiling to gate against, and the terminology
-   drift in =notes/m0.org= is fixed. M0 is closed; the gates read those ceilings.
+The ordered plan, and the checks each step must pass, live in =notes/m1-agenda.org= §3-§12.
+ADR-025 is signed off (2026-11-01), so =notes/m0.org= §3.2 row 12 pins both shapes --
+=bytes/2048/256= and =string/512/64= -- and each M1 type module has a ceiling to gate.
 
 ** 13. Open decisions
 | # | Question | Affects |

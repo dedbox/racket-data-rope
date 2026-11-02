@@ -1,0 +1,588 @@
+#+title: milestone M1 agenda -- the ordered build plan for the type layer
+#+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=, plus the checks that sign each step off.
+#+date: 2026-11-02
+
+** 0. Status legend
+| Tag         | Meaning                                                  |
+|-------------+----------------------------------------------------------|
+| Not started | listed here; nothing written yet                         |
+| In progress | the step's files compile, its checks are not all green   |
+| Blocked     | waits on a decision in §13 or a gate in §11              |
+| Done        | every check the step names passes on a quiet box         |
+| ⟦verify⟧    | carried from =notes/m1.org=; the claim needs a probe first |
+
+** 1. Reading order, and what this file does not decide
+- *The decisions live in =notes/m1.org=.* §4-§9 are the design, §11 the gate list, §13 the
+  open questions. =notes/m0.org= holds the ceilings (§3.2 row 12) and the measurement policy
+  (§1.6). This file orders the work and states what each step must pass; it adds no design
+  choice.
+- *Listings are quoted verbatim* so a step can be done without opening a second file. The
+  sources are =data/rope/core.rkt=, =data/rope/dicts.rkt=, =data/rope.rkt=, both test files
+  named below, =benchmarks/latency-gate.rkt=, =notes/m1.org=, and =racket-facts.md= §11. A
+  command listing drops only the comment marker its source file wraps it in.
+- *Compile before running anything.* Run =raco setup= for the sources, then =raco make=
+  the files about to run: a stale =.zo= silently runs old code, and macro modules are
+  subject to the same trap (=racket-facts.md= §5).
+- *The work sits on branch =m1=*, one commit per step, closed by a merge-squash into =dev=
+  whose message follows =AGENTS.md= §Git commit messages: the achievements as list items, the
+  files that changed, the values the measurements settled, and what is still absent.
+- *The latency gate is not a test.* =raco test tests/= never runs the gate file (ADR-026),
+  and a gate run needs a quiet box -- about one minute per shape (=racket-facts.md= §6).
+
+** 2. The surface M1 builds on -- quoted from the current sources
+The two structs in =data/rope/core.rkt= and every tree algorithm stay untouched, so M1
+adds a compile-time index over the dictionary that already exists.
+
+#+begin_src racket
+;;   empty       -- the empty chunk value
+;;   length      -- chunk → nat        (element count)
+;;   ref         -- chunk nat → element
+;;   slice       -- chunk nat nat → chunk   (Racket convention: [start, end))
+;;   append      -- chunk chunk → chunk
+;;   width       -- chunk → nat        (index span; procedure or per-element constant)
+;;   limit       -- max elements per leaf
+;;   merge-limit -- concat merges boundary leaves when combined length ≤ this
+(struct chunk-dict (empty length ref slice append width limit merge-limit) #:authentic #:sealed)
+
+;; Build a `chunk-dict`: `#:width` takes a procedure or a per-element constant, and
+;; `#:merge-limit` defaults to `#:limit`.
+(define (make-chunk-dict #:empty e #:length len #:ref ref #:slice slice #:append app
+                         #:width [width 1] #:limit limit #:merge-limit [merge-limit limit])
+  (chunk-dict e len ref slice app
+              (if (procedure? width) width (λ (c) (* width (len c))))
+              limit merge-limit))
+#+end_src
+
+The dictionary carries eight fields, and the type record M1 writes carries nine keys --
+the eight above plus =chunk?=, which ADR-001 places at the typing layer (=notes/m1.org= §4).
+
+Core operations take the dictionary first, so every op M1 generates expands to a call
+whose first argument is the type's dictionary constant:
+
+#+begin_src racket
+(define (rope-ref σ ρ i)
+  (let loop ([ρ ρ] [i i])
+    (if (leaf? ρ)
+        ((chunk-dict-ref σ) (leaf-chunk ρ) i)
+        (let ([n (rope-length (node-left ρ))])
+          (if (< i n)
+              (loop (node-left ρ) i)
+              (loop (node-right ρ) (- i n)))))))
+#+end_src
+
+The runtime constants M1 supersedes, and the converters it moves:
+
+#+begin_src racket
+(define string-dict (make-chunk-dict #:empty "" #:length string-length #:ref string-ref
+                                     #:slice substring #:append string-append
+                                     #:width 1 #:limit 512 #:merge-limit 64))
+
+;; Byte chunks copy cheaper than string chunks, so bytes-dict takes a larger `limit`. Its
+;; merge-limit moved from `limit`/4 to `limit`/8 on the rerun that measured the smaller edit
+;; tail at both matched sizes. See notes/m0.org §3.2 rows 8 and 12.
+(define bytes-dict (make-chunk-dict #:empty #"" #:length bytes-length #:ref bytes-ref
+                                    #:slice subbytes #:append bytes-append
+                                    #:width 1 #:limit 2048 #:merge-limit 256))
+
+;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured frontier for vector
+;; chunks of tokens. See notes/m0.org §3.2 row 21.
+(define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
+                                     #:slice vector-copy #:append vector-append
+                                     #:width 1 #:limit 128 #:merge-limit 16))
+
+;; (string->rope str) is string-dict's constructor: (chunk->rope string-dict str).
+(define (string->rope str) (chunk->rope string-dict str))
+
+;; (bytes->rope bstr) is bytes-dict's constructor: (chunk->rope bytes-dict bstr).
+(define (bytes->rope bstr) (chunk->rope bytes-dict bstr))
+
+;; Return the characters of `ρ` as one string.
+(define (rope->string ρ)
+  (define out (make-string (rope-length ρ)))
+  (rope-fold-chunks (λ (i c) (string-copy! out i c) (+ i (string-length c))) 0 ρ)
+  out)
+
+;; Return the bytes of `ρ` as one byte string.
+(define (rope->bytes ρ)
+  (define out (make-bytes (rope-length ρ)))
+  (rope-fold-chunks (λ (i c) (bytes-copy! out i c) (+ i (bytes-length c))) 0 ρ)
+  out)
+#+end_src
+
+The collector module is an empty placeholder today, the file step 7 fills:
+
+#+begin_src racket
+#lang racket/base
+
+(provide (all-defined-out))
+#+end_src
+
+=tests/core-tests.rkt= pins =20261027= in its fixture block, and =tests/dicts-tests.rkt=
+pins =20261028= inside its randomized invariants suite, so a replay of the macro layer
+walks the identical random sequence with the identical seed.
+
+#+begin_src racket
+  (random-seed 20261027)
+      (random-seed 20261028)
+#+end_src
+
+** 3. Step 1 -- the shared syntax layer (=data/rope/private/type-stx.rkt=) (Not started)
+| Field   | Value                                                      |
+|---------+------------------------------------------------------------|
+| Writes  | =data/rope/private/type-stx.rkt=                             |
+| Depends | none                                                       |
+| Exit    | the module compiles, and both macro modules see one struct |
+| Cites   | =notes/m1.org= §3, §4; =racket-facts.md= §4, §11               |
+
+- Create it with =#lang racket/base=, one =begin-for-syntax= block, and one export
+  clause, =(provide (for-syntax (all-defined-out)))=. A module with no =provide= exports
+  nothing, so a macro module cannot pull the record from it (=racket-facts.md= §4).
+- Transcribe the record, the key order, and the resolver from =notes/m1.org= §4 as
+  written there. Both =data/rope/ops.rkt= and step 4's accessor require this module, so
+  =rope-type= is defined once: two module instances each defining their own struct make
+  the cross-module check fail, which is the trap =racket-facts.md= §11 records against
+  the legacy struct types.
+- Add =arg->pattern= here, not inside a macro module.
+- Add =arg->use= and =check-rope= the same way.
+- Add =rope-type-primitive= and =dict-accessor=, which step 4's accessor needs.
+- The helpers sit here so both macro modules share one definition.
+- Keep the messages in domain terms: =resolve-rope-type= reports what the user wrote and
+  never a struct name or a dictionary (=notes/overview.org= §4.1).
+
+#+begin_src racket
+;; data/rope/private/type-stx.rkt
+#lang racket/base
+(require (for-syntax racket/base))
+(provide (for-syntax (all-defined-out)))
+
+(begin-for-syntax
+  ;; A rope type: a nominal name, the dictionary it is realized by, and the primitive syntax
+  ;; of every chunk-algebra operation (kept so M3 can inline them).
+  (struct rope-type (name dict-id primitives) #:transparent)
+
+  ;; Fixed key order: the eight dictionary fields plus chunk?, which the dictionary itself
+  ;; does not carry -- ADR-001 places chunk? at the typing layer.
+  (define type-keys '(empty length ref slice append width limit merge-limit chunk?))
+
+  ;; Resolution reads the lexical context of the expansion. Standard mechanism: struct
+  ;; identifiers, via syntax-local-value. No local-expand, no syntax properties (ADR-003).
+  (define (resolve-rope-type stx)
+    (define v (syntax-local-value stx (λ () #f)))
+    (cond [(rope-type? v) v]
+          [else (raise-syntax-error #f "not a rope type" stx)])))
+#+end_src
+
+- Check: =raco make data/rope/private/type-stx.rkt= compiles clean, and =tools/lint.sh=
+  prints nothing for it.
+- Check: a probe beside the module (a =-probe.rkt= file, deleted afterwards) expands a
+  call on a non-type identifier and confirms the error names the caller's position -- a
+  probe in another directory cannot require it, because a relative module path resolves
+  against the requiring file (=racket-facts.md= §4).
+
+** 4. Step 2 -- =define-rope-type= (=data/rope/type.rkt=) (Not started)
+| Field   | Value                                                     |
+|---------+-----------------------------------------------------------|
+| Writes  | =data/rope/type.rkt=                                        |
+| Depends | step 1                                                    |
+| Exit    | one type expands; the limit bound is refused at expansion |
+| Cites   | =notes/m1.org= §5; ADR-019                                  |
+
+- Transcribe §5's rule as written, including the =#:fail-when= clause: merge-limit must
+  stay between 1 and =limit=, which is the structural invariant that =rope-valid?= checks
+  in =core.rkt=, so the bound is tested at expansion time and never at runtime.
+- Keep the *original* =#:width= syntax on the record. =make-chunk-dict= wraps a constant
+  today; M3 inlines =(* 1 (string-length c))= instead of calling the wrapper, so the
+  record stores the primitive the body started with (ADR-017, ADR-005).
+- Do not add =#:instances=. Instances are M4, and equality, hashing, and ordering are
+  class operations, so the record holds no entry for them (ADR-010).
+- Export both roles through =(provide (all-defined-out))=: =τ:dict= is the runtime
+  constant and =τ= is the syntax binding, so a type is renamed and imported like any
+  name. Nominal identity is binding identity, and the legacy =rope:string= convention
+  is gone -- =string-rope= coexists with =string=.
+
+The rule M1 writes into =data/rope/type.rkt=, quoted from =notes/m1.org= §5:
+
+#+begin_src racket
+;; data/rope/type.rkt
+#lang racket/base
+(require (for-syntax racket/base syntax/parse data/rope/private/type-stx)
+         data/rope/core
+         syntax/parse/define)
+
+(provide define-rope-type)
+
+(begin-for-syntax
+  (define-syntax-class prim #:description "a primitive operation" (pattern id:id))
+  (define-syntax-class nat #:description "a natural number"
+    (pattern n:integer #:fail-unless (>= (syntax-e #'n) 0) "negative limit"))
+  (define-syntax-class prim-or-lit #:description "a primitive or a literal"
+    (pattern (~or id:id lit:literal))))
+
+(define-syntax-parse-rule (define-rope-type τ:id
+  #:chunk?       chunk?:prim
+  #:empty        empty:prim-or-lit
+  #:length       len:prim
+  #:ref          ref:prim
+  #:slice        slice:prim
+  #:append       app:prim
+  #:width        [width (~or nat:integer prim)]   ; constant, or a chunk procedure
+  #:limit        limit:nat
+  #:merge-limit  [merge-limit nat])
+
+  #:fail-when (or (< (syntax-e #'merge-limit) 1)
+                  (> (syntax-e #'merge-limit) (syntax-e #'limit)))
+          "merge-limit must be between 1 and limit (ADR-019)"
+
+  (begin
+    (define τ:dict (make-chunk-dict #:empty empty #:length len #:ref ref
+                         #:slice slice #:append app #:width width
+                         #:limit limit #:merge-limit merge-limit))
+    (define-syntax τ (rope-type 'τ #'τ:dict
+                         (list chunk? empty len ref slice app width limit merge-limit)))))
+#+end_src
+
+- Check: a smoke case in =tests/type-tests.rkt= defines one type, reads all nine record
+  keys, and confirms =(chunk-dict-limit τ:dict)= equals the declared =#:limit=.
+- Check: expansion rejects =#:merge-limit= above =#:limit= and below 1. A compile-time
+  error cannot be caught at runtime, so the assertion belongs to step 8's harness, not
+  to a runtime =check-exn=.
+
+** 5. Step 3 -- the =#:none= rows (=data/rope/ops.rkt=) (Not started)
+| Field   | Value                                      |
+|---------+--------------------------------------------|
+| Writes  | =data/rope/ops.rkt=, =tests/ops-tests.rkt=     |
+| Depends | step 2                                     |
+| Exit    | the =#:none= rows expand to plain core calls |
+| Cites   | =notes/m1.org= §6, §7; ADR-006               |
+
+- Build the table macro with only the =#:none= rows first, then stop. Step 4 adds the
+  =#:dict= rows, so each expansion change is tested before the next one is written.
+- A =#:none= row still parses the leading type argument and then discards it: the
+  argument is what makes the wrapper checkable, and M2's inference consumes it. The
+  expansion is a plain core call -- no dictionary access, no new closure.
+- The core-function column of the table spells names as =core:rope-length=. The prefix
+  form that =AGENTS.md= §Code style requires is =(prefix-in core/ data/rope/core)=,
+  which yields =core/rope-length=; the column is notation only, and the real names are
+  settled while the table is transcribed.
+- =#:fold= turns =core:rope-concat= into variadic =rope-append= by folding the tail left,
+  over the arguments after the first. Test the zero-, one-, and many-argument forms,
+  because the fold's base case is where a variadic operation goes wrong.
+
+The table M1 generates, quoted from =notes/m1.org= §6:
+
+#+begin_src racket
+(define-rope-ops
+  ;; name            core fn                 signature                  dict?    notes
+  [rope-empty?      core:rope-empty?        (τ -> boolean)             #:none]
+  [rope-length      core:rope-length        (τ -> fixnum)              #:none]
+  [rope-width       core:rope-width         (τ -> fixnum)              #:none]
+  [rope-height      core:rope-height        (τ -> fixnum)              #:none]
+  [rope-chunks      core:rope-chunks        (τ -> list)                #:none]
+  [rope-fold-chunks core:rope-fold-chunks   (τ proc α τ -> α)          #:none]
+  [rope-valid?      core:rope-valid?        (τ -> boolean)             #:dict]
+  [rope-ref         core:rope-ref           (τ fixnum -> elem)         #:dict]
+  [rope-split       core:rope-split         (τ fixnum -> τ τ)          #:dict]
+  [rope-slice       core:rope-slice         (τ fixnum fixnum -> τ)     #:dict]
+  [rope-splice      core:rope-splice        (τ fixnum fixnum τ -> τ)   #:dict]
+  [rope-concat      core:rope-concat        (τ τ -> τ)                 #:dict]
+  [rope-append      core:rope-concat        (τ τ ... -> τ)             #:dict #:fold]
+  [chunk-length     core:chunk-dict-length  (chunk -> fixnum)          #:dict-only]
+  [chunk-ref        core:chunk-dict-ref     (chunk fixnum -> elem)     #:dict-only])
+#+end_src
+
+- Check: each =#:none= row expands to a call on the core module's own function, proven
+  by comparing the macro's result with the direct core call over the same sequences.
+- Check: the fold row's signature carries the accumulator twice, =(τ proc α τ -> α)=,
+  so the generated pattern must accept the initial value and the updated rope.
+- ⟦verify⟧ the row compiles as written: the signature's =α= stays unchecked in M1, and
+  §13 row 6 decides whether M2 checks it (ADR-003).
+
+** 6. Step 4 -- the =#:dict= rows and the =τ.op= accessor (Not started)
+| Field   | Value                                                 |
+|---------+-------------------------------------------------------|
+| Writes  | =data/rope/ops.rkt=                                     |
+| Depends | step 3                                                |
+| Exit    | every =#:dict= row agrees with the core call it wraps   |
+| Cites   | =notes/m1.org= §7, §8; =notes/m0.org= §3.2 row 6; ADR-005 |
+
+- Add the =#:dict= rows one group at a time and re-run =tests/core--ops-tests.rkt= after
+  each group, so a mismatch is attributed to the rows just added, not to the table.
+- =#:dict-only= rows expose the algebra itself -- =chunk-length= and =chunk-ref= -- for
+  hand-written hot loops. They take a chunk, not a rope, and no type argument.
+- Fifteen rows replace the legacy's 45 hand-written members (ADR-006), and nothing in
+  this layer generates an operation per type.
+- Build =τ.op= in this step even though no row uses it, because =define-rope-op= in M3
+  is what needs the accessor; rows call the dictionary directly. Building it now keeps
+  ADR-005's promise honest: a failing gate becomes one keyword, not a rewrite.
+
+The row macro, quoted from =notes/m1.org= §7:
+
+#+begin_src racket
+(begin-for-syntax
+  ;; τ marks a rope argument; concrete names (fixnum, elem, α) are unchecked in M1.
+  (define (rope-arg? spec) (eq? (syntax-e spec) 'τ)))
+
+(define-syntax-parse-rule (define-rope-op name:id core:id (arg ...) result:list #:dict)
+  #:with (pat ...) (map arg->pattern (syntax->list #'(arg ...)))
+  #:with (a ...)   (map arg->use    (syntax->list #'(arg ...)))
+  (define-syntax-parse-rule (name τ:id pat ...)
+    #:do [(define tp (resolve-rope-type #'τ))
+          (for ([arg (in-list (syntax->list #'(arg ...)))])
+            (when (rope-arg? arg) (check-rope 'name tp)))]
+    #:with dict (rope-type-dict-id tp)
+    (core dict a ...)))
+#+end_src
+
+- =check-rope= asserts each argument is itself a type id and that every =τ= argument
+  agrees. The message names the ropes and their types, never a dictionary or a struct:
+
+#+begin_src text
+rope-concat: ropes of different types
+  a : string-rope
+  b : bytes-rope
+#+end_src
+
+- Arity errors come free from the pattern arity of =syntax/parse=, so no row checks one.
+- The leading type argument is parsed by *one shared syntax class*, so M2 widens the
+  grammar without touching a row and the explicit form stays valid forever (T0, §2.2).
+- ⟦verify⟧ that one syntax class accepts a type id now and an inferred position later.
+
+The accessor, quoted from =notes/m1.org= §8:
+
+#+begin_src racket
+(begin-for-syntax
+  ;; τ.op resolves τ statically: a type id gives the primitive as syntax; a variable holding a
+  ;; dictionary gives the runtime accessor. One text, two expansions (ADR-005).
+  (define-syntax-parse-rule (τ.op τ:id key:id . rest)
+    #:do [(define v (syntax-local-value #'τ (λ () #f)))]
+    #:with prim (cond [(rope-type? v) (rope-type-primitive v (syntax-e #'key))]
+                      [else (datum->syntax #'τ (list (dict-accessor (syntax-e #'key)) #'τ))])
+    (prim . rest)))
+#+end_src
+
+- The accessible key set is exactly =type-keys= from step 1, which is why no substitution
+  machinery is needed: this replaces the legacy =star-substitute= and =τ.key= binding
+  machinery (=notes/overview.org= §4.1).
+- ⟦verify⟧ two risks that =notes/overview.org= §4 names: =syntax-local-value= must see
+  the *caller's* lexical context, so pass the op's syntax down rather than rewalking,
+  and it must work inside nested macros and =for= bodies. Both are checked first by
+  probe cases in =tests/type--ops-tests.rkt=, before step 9 measures anything.
+
+** 7. Step 5 -- =string-rope= and =bytes-rope=, and their conversions (Not started)
+| Field   | Value                                              |
+|---------+----------------------------------------------------|
+| Writes  | =data/rope/string.rkt=, =data/rope/bytes.rkt=          |
+| Depends | steps 3 and 4                                      |
+| Exit    | both types round trip through the macro layer      |
+| Cites   | =notes/m1.org= §9; =notes/m0.org= §3.2 row 8, §3.3 Q18 |
+
+- Transcribe §9's listing, then mirror it for bytes. The limits are the measured ones --
+  string =512/64= and bytes =2048/256=, and both follow merge-limit = limit/8, the rule
+  the sweep settled (=notes/m0.org= §3.2 row 8). Write the numbers once, in the module.
+- The byte shape is the pipeline's text type (§3.3 Q18). Byte positions inside it are
+  element indices, so =width= stays the constant 1 and the core ships no index search.
+- Conversions stay thin wrappers over the core, and flattening needs one helper driven
+  by a dictionary rather than a copy per type. The two flatten helpers quoted in §2
+  become one =rope->source-in=, and §13 row 3 decides which module owns it.
+- Ship no token type in M1. The token frontier of =128/16= stays in the benchmark until
+  the pipeline type exists; a second token shape is a distinct type through =#:like=,
+  which is M5 (§13 row 9, ADR-004).
+
+The string module, quoted from =notes/m1.org= §9:
+
+#+begin_src racket
+;; data/rope/string.rkt
+#lang racket/base
+(require data/rope/type data/rope/ops data/rope/core)
+(provide (all-defined-out))
+
+(define-rope-type string-rope
+  #:chunk? string? #:empty "" #:length string-length #:ref string-ref
+  #:slice substring #:append string-append #:width 1
+  #:limit 512 #:merge-limit 64)          ; measured, §3.2 row 8
+
+(define (string->rope s) (chunk->rope string-rope:dict s))
+(define (rope->string ρ) (rope->source-in string-rope:dict ρ))
+#+end_src
+
+- ⟦verify⟧ the sketch requires =data/rope/core= bare, while =AGENTS.md= §Code style wants
+  the prefix form. Settle it while the module is written, and keep one require line
+  rather than two.
+- Check: round trip for a one-leaf source, a source exactly at =limit=, and a source
+  above it, replaying the seeds quoted in §2.
+- Check: =rope-valid?= holds after every generated operation on both types, which is
+  the invariant stated once, in §1.3 of =notes/m0.org=.
+
+** 8. Step 6 -- shrinking =data/rope/dicts.rkt= and re-pointing its callers (Not started)
+| Field   | Value                                                      |
+|---------+------------------------------------------------------------|
+| Writes  | =data/rope/dicts.rkt=, =tests/dicts-tests.rkt=                 |
+| Depends | step 5                                                     |
+| Exit    | one dictionary per chunk representation, callers following |
+| Cites   | =notes/m1.org= §9; invariant 8; ADR-018                      |
+
+- Work in this order so the suite never goes red between commits: add the type modules
+  in step 5, re-point every caller, and then delete =string-dict= and =bytes-dict= in
+  the same commit, so nothing references a dictionary that no longer exists.
+- Keep =vector-dict=. The token frontier is measured but the token type is not shipped
+  (§13 row 9), and =benchmarks/limit-sweep.rkt= still sweeps the token shapes.
+- Keep the flatten helper here or in =ops.rkt= (§13 row 3). Two dictionary constants
+  for one chunk representation would break coherence (invariant 8), which is why this
+  deletion belongs to this step and not to a later cleanup.
+- Callers to re-point: =tests/dicts-tests.rkt= asserts the declared limits of all three
+  dictionaries and the converter arities; =benchmarks/limit-sweep.rkt= calls the two
+  flatten helpers; =benchmarks/dev-sweep.sh= runs the oracle through the dev shim, which
+  mirrors the legacy library and is exempt from the comment tiers (=AGENTS.md=).
+- The sweep builds its own dictionaries with =make-dict= in =benchmarks/limit-harness.rkt=,
+  so the shape list survives the deletion; only the flatten calls move.
+
+** 9. Step 7 -- the collector (=data/rope.rkt=) (Not started)
+| Field   | Value                                                |
+|---------+------------------------------------------------------|
+| Writes  | =data/rope.rkt=                                        |
+| Depends | steps 5 and 6                                        |
+| Exit    | =(require data/rope)= covers ops and =string-rope= alone |
+| Cites   | =notes/m1.org= §9                                      |
+
+- Fill the placeholder quoted in §2: re-export the op macros plus =string-rope= and its
+  conversions. =data/rope/bytes= stays opt-in, so a bytes rope is a deliberate require.
+- Re-export the for-syntax bindings a consumer needs to write =define-rope-type= and
+  not merely to call an operation -- ⟦verify⟧ which ones a downstream module sees.
+- Check: =raco setup --pkgs data-rope= runs sources, metadata, and docs clean, and then
+  =raco test tests/= is green. The docs stay the stub they are today: M5 writes them.
+
+** 10. Step 8 -- the test files, and the compile-error harness (Not started)
+| Field   | Value                                             |
+|---------+---------------------------------------------------|
+| Writes  | the five test files =notes/m1.org= §10 names        |
+| Depends | step 2 for the first two; steps 4-7 for the rest  |
+| Exit    | =raco test tests/= green, one assertion per message |
+| Cites   | =notes/m1.org= §10; =notes/m0.org= §1.6               |
+
+- Expand one type in =tests/type-tests.rkt= and read all nine record keys from it.
+- Exercise every generated op in =tests/ops-tests.rkt=, including variadic =rope-append=.
+- Resolve types across modules in =tests/type--ops-tests.rkt=, and prove one type's
+  dictionary is never used for a rope of another type.
+- Replay the seeds quoted in §2 through =tests/core--ops-tests.rkt=, comparing content
+  and =rope-valid?= against the direct core calls.
+- Assert each compile-time message once in =tests/ops-errors-tests.rkt=.
+- Unit tests for one module sit whole inside a single =(module+ test ..)= block, and a
+  test that pairs two modules is named =A--B-tests.rkt= (=AGENTS.md= §Test files). Each
+  group gets a divider rule above its =test-suite= definitions.
+- The replay suite cannot =require= the fixtures of =tests/core-tests.rkt=: the helpers
+  live in the test submodule, which exports nothing (=racket-facts.md= §4). Recreate the
+  generator with the seed quoted in §2, so content and =rope-valid?= agree with the
+  direct core calls.
+- Compile-time errors cannot be caught at runtime. Run =racket -e= as a subprocess from
+  the project directory and match its stderr, one assertion per message: =merge-limit=
+  out of range (step 2), a non-type argument, a mismatched pair (the message quoted in
+  §6), and an arity error. §13 row 5 decides whether =racket -e= stays, or whether the
+  suite drives =compiler/compile= directly instead.
+- Differential content against the oracle belongs to this pass (=notes/m0.org= §1.6).
+  Extract =dev= and resolve with CLI flags, not =PLTCOLLECTS=, then require the generic
+  core as =rope/rope= so struct types come from one module instance (=racket-facts.md= §11):
+
+#+begin_src text
+git -C ../racket-rope archive dev | tar -x -C /tmp/opencode/rope-dev
+racket -U -X /tmp/opencode/rope-olay -S /usr/share/racket/collects …
+#+end_src
+
+- Check: erasure holds. The two struct definitions in =data/rope/core.rkt= are unchanged
+  in the diff, and a =string-rope= rope and a =bytes-rope= rope are accepted by the same
+  =leaf?= and =node?= predicates (ADR-002).
+- Check: =tools/lint.sh= prints nothing for the modules and test files this step adds.
+
+** 11. Step 9 -- measurement, in the order the gates read it (Not started)
+| Field   | Value                                                      |
+|---------+------------------------------------------------------------|
+| Writes  | =benchmarks/macro-overhead.rkt=, =notes/m0.org= §3.2 row 6     |
+| Depends | steps 5-7                                                  |
+| Exit    | the overhead gate and the latency gate both pass           |
+| Cites   | =notes/m0.org= §3.2 rows 6 and 12; ADR-005, ADR-021, ADR-026 |
+
+- Add the overhead probe first, since it decides whether M3 needs a leaf fast path.
+  It compares =(rope-ref string-rope ρ i)= against the raw =(core:rope-ref σ ρ i)= on
+  the =randref= scenario at both pinned sizes, taking the median of at least three
+  runs (=notes/m0.org= §1.6).
+- The sampler comes from =benchmarks/limit-harness.rkt=, which exports everything it
+  defines, so a new benchmark file can require it (=racket-facts.md= §4).
+- Attribute tails with the GC flag (ADR-021), which separates collector pauses from
+  algorithm cost, and read absolute ns with no competing load (=racket-facts.md= §1).
+- Absolute ns inflate under competing load, while ratios within one process hold on
+  (=notes/m0.org= §3.2 row 9).
+- Then run the latency gate as its header records it:
+
+#+begin_src text
+  raco make benchmarks/latency-gate.rkt benchmarks/limit-sweep.rkt
+  racket benchmarks/latency-gate.rkt          ; three runs per shape, §1.6's minimum
+  racket benchmarks/latency-gate.rkt runs=6   ; more runs against the same ceilings
+#+end_src
+
+- The gate reads its ceilings out of =notes/m0.org= §3.2 row 12 and keeps no figures of
+  its own, so a pass writes nothing into =benchmarks/= and a breach edits the note, not
+  the gate. Name the closest margin rather than asserting a vague pass (=AGENTS.md=).
+- Record compile time per op alongside the run: expand a call-site file whose operations
+  and types grow together, and time =raco make= at each step. Expansion cost must stay
+  flat -- legacy V5 never measured it (=notes/overview.org= §4.1).
+- M1 cannot measure inline mode, so =notes/m0.org= §3.2 row 6 closes here against raw
+  core calls, and the leaf fast path becomes M3's decision if overhead passes 10% (ADR-005).
+
+** 12. Step 10 -- close-out, and what M1 does not ship (Not started)
+| Field   | Value                                            |
+|---------+--------------------------------------------------|
+| Writes  | =notes/m0.org= §1.5, =notes/m1.org= §13, branch =dev=  |
+| Depends | step 9                                           |
+| Exit    | the checklist below is green on a quiet box      |
+| Cites   | ADR-025, ADR-026; =AGENTS.md= §Git commit messages |
+
+- =raco setup --pkgs data-rope= runs clean and =raco test tests/= is green, with the
+  sources compiled before the run (=racket-facts.md= §5).
+- =racket benchmarks/latency-gate.rkt= passes, and the line recorded names the margin
+  closest to breaching, not an average (=AGENTS.md= §Git commit messages).
+- Row 6's outcome goes into =notes/m0.org= §3.2, and §1.5 there carries the status this
+  file's legend names. =notes/m1.org= §13 gains a row per decision resolved, and its
+  =#+date:= moves to the pass that resolved it (=AGENTS.md= §Markup).
+- A decision that outgrows its row becomes =notes/adr-027.org=, not prose inside a table
+  (=AGENTS.md= §File names). Numbers already cited keep their section and row numbers.
+- The merge-squash into =dev= names the files that changed and the values the sweep settled,
+  then states what is absent: no inference (M2), no inline mode and no =in-rope= (M3),
+  no classes (M4), and no documentation past the stub shipped today (M5).
+
+** 13. Decisions to settle, and the step that needs each one
+| =notes/m1.org= §13 | Question                               | Blocks    | Needs                 |
+|------------------+----------------------------------------+-----------+-----------------------|
+|                1 | Cursors in M1 or M3?                   | none yet  | a scope call          |
+|                2 | =#:as-procedure= rows for ops?           | step 3    | a table decision      |
+|                3 | Where does =rope->source-in= live?       | steps 5-6 | a module choice       |
+|                4 | Inline mode and a =#:width= procedure?   | step 4    | a rule for M3         |
+|                5 | Does the error harness stay =racket -e=? | step 8    | a harness choice      |
+|                6 | Is =α= checked in a signature?           | step 3    | M1 or M2              |
+|                7 | Index bounds in the typed layer?       | step 4    | ADR-011 policy        |
+|                8 | Copy on adopt, or document it?         | step 5    | ADR-002, ADR-011      |
+|                9 | Ship a token type now?                 | step 5    | =notes/m0.org= §3.3 Q21 |
+
+- Row 1 is the one that changes scope: =notes/m0.org= §3.3 Q17 defers cursors to M1, while
+  §1.5 of the same file does not list them, and they pair with =in-rope=, which is M3.
+  Record whichever answer is chosen instead of building the spine descent twice (ADR-009).
+- Rows 3 and 6 are cheap to answer and they gate two steps each, so settle them before
+  step 5 begins.
+- Rows 7 and 8 are policy questions about safety at the typed layer. =core.rkt= checks
+  nothing today, and the debug build that would assert it is M5, so M1 documents the
+  preconditions and lets the chunk primitives raise, unless a decision says otherwise.
+
+** 14. Traps this pass has hit before, in the same toolchain
+- A module with no =provide= exports nothing, and a relative path resolves against the
+  requiring file (=racket-facts.md= §4).
+- A stale =.zo= silently runs old code, and macro modules are not exempt from the trap
+  (=racket-facts.md= §5). Compile first, then run.
+- Defining =round=, =max=, or any name containing a =/= shadows the builtin and gives
+  =application: not a procedure=, which reports the callee's value, not the argument
+  (=racket-facts.md= §3, §8). =bytes/elem= is a division operator until shadowed.
+- =command-line= reads its =#:args= as strings, not bytes (=racket-facts.md= §3), the
+  form =benchmarks/latency-gate.rkt= passes to the sweep.
+- =current-memory-use= undercounts struct and pair allocation, and =VmRSS= deltas over
+  a live rope often read zero (=racket-facts.md= §2), since the CS backend reuses pages.
+- Measure retained bytes with the tree-overhead formula rather than procfs (=racket-facts.md=
+  §2), and read =/proc/self/status= with =file->bytes=, since =file->lines= truncates it.
+- Paren-heavy edits break a *later* form when one close is missing (=racket-facts.md=
+  §8). Check the paren balance after each edit to a macro module.

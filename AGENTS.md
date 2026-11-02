@@ -18,11 +18,13 @@ raco make data/rope/some-file.rkt                       # one source file
 raco test tests/                                        # all tests
 raco test tests/X.rkt                                   # one test file
 raco cover -p -b data-rope                              # report -> coverage/
+racket benchmarks/latency-gate.rkt                      # latency gate vs notes/m0.org §3.2 row 12 ceilings
 ```
 
 Compile the sources and the files about to run before every test or benchmark run: a stale `.zo`
 silently runs old code (`racket-facts.md` §5). Micro-benchmarks backing an architectural or design
-decision stay in `benchmarks/`.
+decision stay in `benchmarks/`. The latency gate is a benchmark, not a test: `raco test tests/`
+never runs it (`ADR-026`).
 
 ## Test files
 

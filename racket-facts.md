@@ -14,6 +14,7 @@ Each entry is marked VERIFIED (measured this session) or ASSUMED (inference, re-
 | Per-operation resolution when sampling a window | resolution ÷ ops in window (0.25 µs / 32 ops ≈ 8 ns) | VERIFIED |
 | Meaning of a ~20 ns measured mean | near the measurement floor; treat as clock-bound, not algorithm-bound | VERIFIED |
 | Window size rule | a window must last several ticks: 32 ops at ~1 µs = ~32 µs, fine; 32 ops at ~20 ns = ~0.7 µs, marginal | VERIFIED |
+| Absolute ns while another process competes for cores | inflated on the edit scenarios: bytes typing p50 648 ns against 481 quiet at 100 K, clean p99 1484 against 817; `randref` moves 1-3%; ratios between scenarios inside one process stay comparable | VERIFIED (2026-11-02) |
 
 Recipe, for hot ops:
 
@@ -61,6 +62,7 @@ Memory pressure of a stress run: a 100 MB **string** rope is ~400 MB payload (+ 
 | `for/string` | does not exist | ASSUMED |
 | `exact-floor` | needs `(require racket/math)` | VERIFIED |
 | `command-line` | needs `(require racket/cmdline)` + `(module+ main …)` | VERIFIED |
+| `command-line #:args` values | arrive as **strings**, not bytes; converting them with `string->bytes/utf-8` breaks `string-split` | VERIFIED (2026-11-02, fixing `benchmarks/latency-gate.rkt`) |
 | `string-join` | `racket/string` | VERIFIED |
 | `~a` formatting | `racket/format` | VERIFIED |
 | `exact->inexact` | available from `racket/base` | VERIFIED |
@@ -86,7 +88,8 @@ rm -rf benchmarks/compiled && raco make …                            # when in
 
 The commands are listed in `AGENTS.md` §Commands. Behavior measured on this machine: the full test
 suite is ~114 tests and prints per-file summary lines; docs setup also writes man pages plus
-`data/rope/doc/`; coverage output lands in `coverage/`.
+`data/rope/doc/`; coverage output lands in `coverage/`. The latency gate prints one line per cell and
+exits 1 on a breach; it needs a quiet box, where a run costs ~1 min per shape.
 
 ## 7. Shell gotchas observed
 

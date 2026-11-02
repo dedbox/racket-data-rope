@@ -279,7 +279,7 @@ rope-concat: ropes of different types
 | Gate | Pass | Source |
 |------------------+------------------------------------------------------------+-------------|
 | dictionary overhead | macro-layer =(rope-ref string-rope r i)= within 10% of a raw =(core:rope-ref σ ρ i)= on random access; else the leaf case is inlined at M3 | §3.2 row 6, ADR-005 |
-| latency ceilings | pinned on =bytes/2048/256= and =string/512/64= at 1024 windows (2026-10-31 and 2026-11-01); a gate compares the median of at least three runs | §3.2 row 12 |
+| latency ceilings | pinned on =bytes/2048/256= and =string/512/64= at 1024 windows (2026-10-31 and 2026-11-01); =racket benchmarks/latency-gate.rkt= takes the median of ~runs=3~ runs against those ceilings (ADR-026) | §3.2 row 12, ADR-026 |
 | compile time | flat in ops × types; record expansion time per op | ADR-005 |
 | erasure | no type tag, no per-node closure, no per-type struct; the pair of structs in =core.rkt= is unchanged | ADR-002 |
 | invariants | =rope-valid?= after every random operation through the macro layer | §1.3 |

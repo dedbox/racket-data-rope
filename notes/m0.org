@@ -1,5 +1,5 @@
 #+title: rope system from scratch: consolidated design record
-#+date: 2026-11-01
+#+date: 2026-11-02
 #+subtitle: scope = the independent, from-scratch design and its first milestone (M0). Rounds: R1 = from-scratch design, R2 = your answers, R3 = M0 build-out, R4 = shipping decisions.
 
 *** Status legend
@@ -103,6 +103,12 @@
   a lone run would flag a false regression about one time in three. Window scenarios now sample 1024
   windows (R4): below ~1000 samples the percentile index clamps to the last sample, so
   p99.9 is genuine only at the strengthened sampling — it collapsed into max at 20 windows.
+- The gate that enforces those ceilings is =racket benchmarks/latency-gate.rkt= (ADR-026): it
+  sweeps each pinned shape =runs= times as a child process, takes the median per
+  (shape, size, scenario) cell against §3.2 row 12, prints one line per cell, and exits
+  non-zero on a breach. It stays out of =raco test tests/=.
+- The gate and the sweep time wall-clock per operation, so read them with no competing load: a
+  loaded box inflates absolute ns while ratios inside one process stay comparable (§3.2 row 9).
 
 *** 2. Architecture decision records (chronological)
 **** R1: the from-scratch design
@@ -534,6 +540,38 @@ Phase 5 writes one of:
   question.
 - Revisit when :: the tree or chunk layout changes (§3.2 row 12), or an M1 gate reads a tail the
   pinned bands cannot support at three runs.
+
+***** ADR-026 The latency gate reads its budgets from §3.2 row 12
+- Status :: Accepted (R4): =benchmarks/latency-gate.rkt= enforces the row, and the pass rule
+  is the median of at least three runs (§1.6).
+- Problem :: §3.2 row 12 states eight budgets as prose and nothing enforces them. A slower
+  =core.rkt= shows up only if someone reruns the sweep and reads the rows by hand, and row
+  12 itself says one run's clean p99 spreads wide enough to read as a regression about one
+  run in three -- so reading one run is not a gate.
+- Decision :: =benchmarks/latency-gate.rkt= runs =benchmarks/limit-sweep.rkt= as a child
+  process, ~runs=3~ per shape by default (§1.6's minimum), takes the median of each
+  (shape, size, scenario) cell, prints median, ceiling and margin per cell, and exits
+  non-zero when a median passes its budget. Every budget comes out of row 12: the gate keys
+  on the shape markers (=Bytes shape=, =String shape=), reads the config code that follows
+  each marker for the leaf limit, walks the =100 K typing= and =10 M typing= blocks for
+  =-> ceilings A / B ns= pairs ordered =type= then =randref=, asserts exactly 8 pairs, and
+  fails naming §3.2 row 12 when that grammar does not match.
+- Rejected :: A constants table in the gate (one measurement kept twice, drifting on every
+  re-pin); reading a single run (row 12's clean-p99 band makes a lone run a coin flip);
+  passing ~scenarios=type,randref~ to the child -- row 12 says a comparison must use the same
+  harness, and the pinned numbers were read in the full scenario list, whose earlier
+  scenarios warm the heap the gated tails are measured in; folding the gate into
+  =raco test tests/=, where minutes of sweeping do not belong.
+- Consequences :: One source for the numbers: re-pinning §3.2 row 12 moves the gate's budgets
+  with no edit to =benchmarks/latency-gate.rkt=, and a row whose grammar no longer matches
+  stops the gate with a message naming row 12 instead of silently gating nothing. The gate is
+  a benchmark, so =raco test tests/= stays as it is, and §1.6, =notes/m1.org= §11 and
+  =AGENTS.md= §Commands carry the command as pointers only. Its readings are wall-clock per
+  operation, so a gate run needs a box with no competing load: the first quiet run passed all eight
+  cells with the tightest margin +1 ns, while the same configs on a loaded box breached 5 of 8 --
+  §1.6 states the rule.
+- Revisit when :: the tree or chunk layout changes (§3.2 row 12 re-pins), or the harness
+  changes its scenario order or window count, which moves the tails the ceilings were read in.
 
 *** 3. Open questions
 **** 3.1 Needed to proceed

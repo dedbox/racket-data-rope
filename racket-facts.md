@@ -157,7 +157,7 @@ Same six-run treatment for the string shape on 2026-11-01, `string/512/64`: typi
 at 100 K elements and `515.5/1150.5` at 10 MB, random `rope-ref` `29/80.5` and `139/219`, 196
 leaves at height 8 and 19532 at height 15, ~4.16 B/element. `limit 256` types ~11% cheaper but
 reads ~44% slower at 100 K elements; `limit 1024` reads ~11% faster at 100 K but types
-`656/1596` ns, so 512/64 is the frontier and the merge rule fixes `limit`/8.
+`656/1596` ns, so 512/64 is the balance point and the merge rule fixes `limit`/8.
 
 Gates compare the median of at least three runs: one bytes run put clean p99 at 1262 ns against
 a 1159 ns ceiling, and one string run at 1508 ns against a 1323 ns ceiling, while p50 stayed

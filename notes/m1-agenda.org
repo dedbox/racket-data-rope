@@ -23,7 +23,7 @@
 - *Compile before running anything.* Run =raco setup= for the sources, then =raco make=
   the files about to run: a stale =.zo= silently runs old code, and macro modules are
   subject to the same trap (=racket-facts.md= §5).
-- *The work sits on branch =m1=*, one commit per step, closed by a merge-squash into =dev=
+- *The work sits on branch m1*, one commit per step, closed by a merge-squash into =dev=
   whose message follows =AGENTS.md= §Git commit messages: the achievements as list items, the
   files that changed, the values the measurements settled, and what is still absent.
 - *The latency gate is not a test.* =raco test tests/= never runs the gate file (ADR-026),
@@ -84,8 +84,8 @@ The runtime constants M1 supersedes, and the converters it moves:
                                     #:slice subbytes #:append bytes-append
                                     #:width 1 #:limit 2048 #:merge-limit 256))
 
-;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured frontier for vector
-;; chunks of tokens. See notes/m0.org §3.2 row 21.
+;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured balance of typing
+;; and reading for vector chunks of tokens. See notes/m0.org §3.2 row 21.
 (define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                                      #:slice vector-copy #:append vector-append
                                      #:width 1 #:limit 128 #:merge-limit 16))
@@ -384,7 +384,7 @@ The accessor, quoted from =notes/m1.org= §8:
 - Conversions stay thin wrappers over the core, and flattening needs one helper driven
   by a dictionary rather than a copy per type. The two flatten helpers quoted in §2
   become one =rope->source-in=, and §13 row 3 decides which module owns it.
-- Ship no token type in M1. The token frontier of =128/16= stays in the benchmark until
+- Ship no token type in M1. The token balance point =128/16= stays in the benchmark until
   the pipeline type exists; a second token shape is a distinct type through =#:like=,
   which is M5 (§13 row 9, ADR-004).
 
@@ -424,7 +424,7 @@ The string module, quoted from =notes/m1.org= §9:
 - Work in this order so the suite never goes red between commits: add the type modules
   in step 5, re-point every caller, and then delete =string-dict= and =bytes-dict= in
   the same commit, so nothing references a dictionary that no longer exists.
-- Keep =vector-dict=. The token frontier is measured but the token type is not shipped
+- Keep =vector-dict=. The token balance point is measured but the token type is not shipped
   (§13 row 9), and =benchmarks/limit-sweep.rkt= still sweeps the token shapes.
 - Keep the flatten helper here or in =ops.rkt= (§13 row 3). Two dictionary constants
   for one chunk representation would break coherence (invariant 8), which is why this

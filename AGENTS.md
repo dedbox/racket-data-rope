@@ -93,6 +93,9 @@ Three tiers: module header, section header, definition doc. They govern Racket c
   `included` -- `the gate is added to benchmarks/`, never "the gate lands in benchmarks/".
   The rule covers comments, notes, and commit messages alike. Positional uses stay: an edit
   landing inside a leaf names a location, not a delivery.
+- Never `frontier` for a configuration a sweep settles on: say `balance point`, or name the
+  costs it trades -- `so 512/64 is the balance point`, never "the frontier point". The rule
+  covers comments, notes, and commit messages alike.
 - Fill the column: prose lines sit in the 85-91 band, hard cap 93, ragged only on a paragraph's last
   line. Paragraph breaks fall between lines, never mid-sentence.
 - Lists use `-`: pack single-line items with no blank lines between them, separate with a blank line

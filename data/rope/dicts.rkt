@@ -56,8 +56,8 @@
                                     #:slice subbytes #:append bytes-append
                                     #:width 1 #:limit 2048 #:merge-limit 256))
 
-;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured frontier for vector
-;; chunks of tokens. See notes/m0.org §3.2 row 21.
+;; Token ropes take `limit` 128 with `merge-limit` 16 -- the measured balance of typing
+;; and reading for vector chunks of tokens. See notes/m0.org §3.2 row 21.
 (define vector-dict (make-chunk-dict #:empty (vector) #:length vector-length #:ref vector-ref
                                      #:slice vector-copy #:append vector-append
                                      #:width 1 #:limit 128 #:merge-limit 16))

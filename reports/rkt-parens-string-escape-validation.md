@@ -1,7 +1,7 @@
-# `rkt_parens` accepts invalid string escapes
+# `delimiter_doctor` accepts invalid string escapes
 
 **Type:** feature request
-**Component:** `rkt_parens`, the delimiter doctor for Racket source files
+**Component:** `delimiter_doctor`, the delimiter doctor for Racket source files
 **Severity:** the `BALANCED` verdict is wrong for a file the reader rejects
 
 ## Summary

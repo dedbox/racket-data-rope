@@ -1,7 +1,7 @@
-# `rkt_parens` repairs balance without checking nesting
+# `delimiter_doctor` repairs balance without checking nesting
 
 **Type:** bug report
-**Component:** `rkt_parens`, the delimiter doctor for Racket source files
+**Component:** `delimiter_doctor`, the delimiter doctor for Racket source files
 **Severity:** a repair plan can pass its own simulation and produce code that does not mean
 what the author intended
 

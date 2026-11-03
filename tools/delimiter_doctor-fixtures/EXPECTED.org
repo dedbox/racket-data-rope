@@ -1,0 +1,275 @@
+* tools/delimiter_doctor-fixtures/arity.rkt
+
+#+begin_src text
+=== delimiter_doctor: tools/delimiter_doctor-fixtures/arity.rkt ===
+STATUS: IMBALANCED (11 lines, 1 delimiter error(s), 0 escape error(s))
+DECISION: ASK_USER (see QUESTIONS FOR USER; do not edit non-strong or ambiguous items before the answer)
+
+-- SURFACE (where the reader notices) and ORIGIN (where it likely started) --
+Only the first error is fully reliable; later ones may be cascades.
+S1  tools/delimiter_doctor-fixtures/arity.rkt:8:1: error: unclosed `(check-equal?` at 8:1 — EOF (line 11) reached while still inside it
+      ORIGIN: opened at 8:1 | (check-equal? (compile-message
+      EVIDENCE: none — no later line starts at/left of this opener, so either the closer is missing at the END of the enclosed code, or this opener is stray
+
+-- INDENTATION EVIDENCE (all, by line) --
+none
+
+-- PLACEMENTS: single closers that each balance the file but build different trees --
+(1 closer(s) are missing in total; these are candidates for the FIRST one — re-run after applying it)
+P1 [indentation agrees] insert `)` at 10:19 — closes `(check-equal?` at 8:1; nothing follows
+P2 [indentation contradicts] insert `)` at 8:31 — closes `(compile-message` at 8:15; line 9 (`(declaring value)`, indent 15) is indented inside it yet would become an argument of the enclosing `(check-equal?` at 8:1
+P3 [indentation contradicts] insert `)` at 9:33 — closes `(compile-message` at 8:15; line 10 (`#f)`, indent 15) is indented inside it yet would become an argument of the enclosing `(check-equal?` at 8:1
+
+-- REPAIR PLAN (simulated; bracket edits only) --
+E1 [low] insert `)` at 10:19 — append after the last code token
+    -                #f)
+    +                #f))
+    closes: `(check-equal?` at 8:1
+    alt: `#f` stands alone on line 10 and may belong to the enclosing form, not the one being closed.
+         Moving `)` to 9:33 instead closes `(compile-message` at 8:15 and the file still lexes BALANCED.
+SIMULATION: after E1..E1 the file re-lexes BALANCED (weakest edit: low). This checks bracket COUNTS and KINDS only; it does not check which form each closer ends, nor arity or meaning.
+
+-- QUESTIONS FOR USER (paste verbatim, one message, then wait) --
+Q1 [line 10] `#f` stands alone on line 10, directly before the inserted closer `)` (10:19). Is it the LAST element of the form being closed, or an argument of the form that encloses it?
+      A: last element of the form being closed — keep `)` at 10:19
+      B: argument of the enclosing form — put `)` at 9:33 instead (file still lexes BALANCED)
+      C: other — tell me where the closer goes
+      (no default: the answer is required)
+
+-- CONTEXT (d = open-bracket depth at start of line; ? = unreliable after a swallowed region) --
+[unclosed opener]
+      5 d=0  | (define (declaring v) (cons 'd v))
+      6 d=0  | (define value '(a b))
+      7 d=0  | 
+>     8 d=0  | (check-equal? (compile-message
+      9 d=2  |                (declaring value)
+     10 d=2  |                #f)
+     11 d=1  | 
+
+AGENT PROTOCOL (Qwen)
+  1. Only `STATUS: BALANCED` ends the task. READ-ERROR and IMBALANCED never do.
+  2. Fix the EARLIEST origin first; later errors are often cascades. Re-run after every edit.
+  3. DECISION APPLY_PLAN -> apply every listed edit, then tell the user.
+     DECISION ASK_USER   -> edit nothing yet; paste QUESTIONS FOR USER verbatim, ONE message, wait.
+     Where a question has no default, do not choose for the user.
+  4. "Lexes BALANCED" proves bracket COUNTS and KINDS only, not that a closer ends the intended
+     form. After any non-strong edit show the diff and ask the user to confirm that the last
+     element before each inserted closer belongs inside that form.
+  5. A string problem comes first: the reader's site is the END of a cascade. Use the
+     ORIGIN-CANDIDATES, ask, edit the confirmed one, re-run. A candidate that lexes BALANCED is
+     not necessarily right (an edit can hide a bracket inside a string); prefer candidates that
+     leave no multi-line strings, and tell the user when the best one still leaves problems.
+  6. Change ONLY the characters named. No re-indenting, reformatting or refactors.
+  7. Never append closers at EOF unless the user chose that option.
+  8. Never guess intent inside quoted data or macro templates: ask.
+  9. SMELL lines are informational. Mention one only if you just wrote or edited that string.
+ 10. READER: DISAGREES -> trust the reader and tell the user the script may be wrong.
+ 11. At STATUS: BALANCED ask the user to run `raco make FILE` and the tests and paste the output.
+  Exit codes: 0 balanced, 1 imbalanced / read error, 2 usage/IO error.
+#+end_src
+
+* tools/delimiter_doctor-fixtures/arity-wrong.rkt
+
+#+begin_src text
+tools/delimiter_doctor-fixtures/arity-wrong.rkt: STATUS: BALANCED (11 lines)
+#+end_src
+
+* tools/delimiter_doctor-fixtures/escape.rkt
+
+#+begin_src text
+=== delimiter_doctor: tools/delimiter_doctor-fixtures/escape.rkt ===
+STATUS: READ-ERROR (6 lines, 0 delimiter error(s), 1 escape error(s))
+DECISION: ASK_USER (see QUESTIONS FOR USER; nothing is edited before the answers)
+
+-- STRING ESCAPES the reader rejects --
+X1  tools/delimiter_doctor-fixtures/escape.rkt:3:20: error: unknown escape sequence `\?` in string
+      fix-candidates: double the backslash → `\\?` (regexp literals need this)  |  delete the backslash → `?`
+
+-- QUESTIONS FOR USER (paste verbatim, one message, then wait) --
+Q1 [line 3] `\?` at 3:20 is not an escape the reader accepts (in #rx/#px literals a regexp metacharacter needs a doubled backslash). What was meant?
+      A: a literal backslash followed by `?` — write `\\?`  (script proposal)   <- default
+      B: just `?` — delete the backslash
+      C: other — tell me the intended text
+
+-- CONTEXT (d = open-bracket depth at start of line; ? = unreliable after a swallowed region) --
+[first escape error]
+      1 d=0  | #lang racket
+      2 d=0  | 
+>     3 d=0  | (define rx #rx"pair\?: two arguments")
+      4 d=0  | 
+      5 d=0  | (displayln (regexp-match rx "pair?: two arguments"))
+      6 d=0  | 
+
+AGENT PROTOCOL (Qwen)
+  1. Only `STATUS: BALANCED` ends the task. READ-ERROR and IMBALANCED never do.
+  2. Fix the EARLIEST origin first; later errors are often cascades. Re-run after every edit.
+  3. DECISION APPLY_PLAN -> apply every listed edit, then tell the user.
+     DECISION ASK_USER   -> edit nothing yet; paste QUESTIONS FOR USER verbatim, ONE message, wait.
+     Where a question has no default, do not choose for the user.
+  4. "Lexes BALANCED" proves bracket COUNTS and KINDS only, not that a closer ends the intended
+     form. After any non-strong edit show the diff and ask the user to confirm that the last
+     element before each inserted closer belongs inside that form.
+  5. A string problem comes first: the reader's site is the END of a cascade. Use the
+     ORIGIN-CANDIDATES, ask, edit the confirmed one, re-run. A candidate that lexes BALANCED is
+     not necessarily right (an edit can hide a bracket inside a string); prefer candidates that
+     leave no multi-line strings, and tell the user when the best one still leaves problems.
+  6. Change ONLY the characters named. No re-indenting, reformatting or refactors.
+  7. Never append closers at EOF unless the user chose that option.
+  8. Never guess intent inside quoted data or macro templates: ask.
+  9. SMELL lines are informational. Mention one only if you just wrote or edited that string.
+ 10. READER: DISAGREES -> trust the reader and tell the user the script may be wrong.
+ 11. At STATUS: BALANCED ask the user to run `raco make FILE` and the tests and paste the output.
+  Exit codes: 0 balanced, 1 imbalanced / read error, 2 usage/IO error.
+#+end_src
+
+* tools/delimiter_doctor-fixtures/quote-ok.rkt
+
+=
+#+begin_src text
+== delimiter_doctor: tools/delimiter_doctor-fixtures/quote-ok.rkt ===
+STATUS: IMBALANCED (13 lines, 5 delimiter error(s), 0 escape error(s))
+DECISION: ASK_USER (bracket plan suppressed: fix the quote/comment problem first; see ORIGIN-CANDIDATES and QUESTIONS)
+
+-- SURFACE (where the reader notices) and ORIGIN (where it likely started) --
+Only the first error is fully reliable; later ones may be cascades.
+S1  tools/delimiter_doctor-fixtures/quote-ok.rkt:12:17: error: unterminated string starting here — everything after it is swallowed (this is where the reader gives up, not necessarily where the defect is)
+      ORIGIN: the construct itself starts at 12:17
+      The reader pairs quotes from the front, so this is only where pairing ran out; the quote that is really wrong is earlier.
+      ORIGIN-CANDIDATES (each = one edit applied, whole file re-lexed; best first):
+        H1 insert `"` at 4:36 (end of line) — string opened at 4:29 currently runs to line 5 → file then lexes BALANCED; no multi-line strings remain
+        H2 delete the stray `"` at 4:29 — string opened at 4:29 currently runs to line 5 → file then lexes BALANCED; no multi-line strings remain
+        H3 insert `"` at 5:40 (end of line) — string opened at 5:22 currently runs to line 6 → file then lexes BALANCED; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H4 delete the stray `"` at 5:22 — string opened at 5:22 currently runs to line 6 → quotes then pair up, but 1 bracket problem(s) remain; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H5 insert `"` at 5:37 (before the trailing closers) — string opened at 5:22 currently runs to line 6 → quotes then pair up, but 3 bracket problem(s) remain; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H6 insert `"` at 6:22 (before the trailing closers) — string opened at 6:21 currently runs to line 12 → quotes then pair up, but 1 bracket problem(s) remain; 2 multi-line string(s) remain, so a stray quote may still be hiding
+... 4 later error(s) hidden: unreliable after a swallowed region (--json lists all)
+
+-- REPAIR PLAN (simulated; bracket edits only) --
+suppressed: a swallowed region (unterminated string/comment) makes every later bracket observation unreliable, so no bracket plan is simulated; fix the quote/comment first and re-run.
+
+SMELL: string literal(s) spanning lines (legal; a stray `"` often hides here) — informational
+  4:29 → line 5 (2 lines): (check-exn msg (λ () (run "abcdef
+  5:22 → line 6 (2 lines): (check-exn "other" (λ () (void 1)))
+  6:21 → line 12 (7 lines): (displayln "done")))
+
+-- QUESTIONS FOR USER (paste verbatim, one message, then wait) --
+Q1 [line 4] The reader gives up at 12:17, but it pairs quotes from the front, so that is the END of a cascade. Which single edit matches your intent?
+      A: insert `"` at 4:36 (end of line)  (file then lexes BALANCED; no multi-line strings remain)
+      B: delete the stray `"` at 4:29  (file then lexes BALANCED; no multi-line strings remain)
+      C: insert `"` at 5:40 (end of line)  (file then lexes BALANCED; 1 multi-line string(s) remain, so a stray quote may still be hiding)
+      Z: none of these — tell me the line and column where the string must end, or which quote is stray
+      (no default: the answer is required)
+
+-- CONTEXT (d = open-bracket depth at start of line; ? = unreliable after a swallowed region) --
+[best origin candidate]
+      1 d=0  | #lang racket
+      2 d=0  | 
+      3 d=0  | (define (assert x msg)
+>     4 d=1  |   (check-exn msg (λ () (run "abcdef
+      5 d=?  |     (check-exn "other" (λ () (void 1)))
+      6 d=?  |     (displayln "done")))
+      7 d=?  |   (void x)))
+[reader site]
+      9 d=?  | (define (run s) s)
+     10 d=?  | (define (check-exn m thunk) (thunk))
+     11 d=?  | 
+>    12 d=?  | (assert 1 "first")
+     13 d=?  | 
+
+AGENT PROTOCOL (Qwen)
+  1. Only `STATUS: BALANCED` ends the task. READ-ERROR and IMBALANCED never do.
+  2. Fix the EARLIEST origin first; later errors are often cascades. Re-run after every edit.
+  3. DECISION APPLY_PLAN -> apply every listed edit, then tell the user.
+     DECISION ASK_USER   -> edit nothing yet; paste QUESTIONS FOR USER verbatim, ONE message, wait.
+     Where a question has no default, do not choose for the user.
+  4. "Lexes BALANCED" proves bracket COUNTS and KINDS only, not that a closer ends the intended
+     form. After any non-strong edit show the diff and ask the user to confirm that the last
+     element before each inserted closer belongs inside that form.
+  5. A string problem comes first: the reader's site is the END of a cascade. Use the
+     ORIGIN-CANDIDATES, ask, edit the confirmed one, re-run. A candidate that lexes BALANCED is
+     not necessarily right (an edit can hide a bracket inside a string); prefer candidates that
+     leave no multi-line strings, and tell the user when the best one still leaves problems.
+  6. Change ONLY the characters named. No re-indenting, reformatting or refactors.
+  7. Never append closers at EOF unless the user chose that option.
+  8. Never guess intent inside quoted data or macro templates: ask.
+  9. SMELL lines are informational. Mention one only if you just wrote or edited that string.
+ 10. READER: DISAGREES -> trust the reader and tell the user the script may be wrong.
+ 11. At STATUS: BALANCED ask the user to run `raco make FILE` and the tests and paste the output.
+  Exit codes: 0 balanced, 1 imbalanced / read error, 2 usage/IO error.
+#+end_src
+
+* tools/delimiter_doctor-fixtures/quote.rkt
+
+=
+#+begin_src text
+== delimiter_doctor: tools/delimiter_doctor-fixtures/quote.rkt ===
+STATUS: IMBALANCED (13 lines, 5 delimiter error(s), 0 escape error(s))
+DECISION: ASK_USER (bracket plan suppressed: fix the quote/comment problem first; see ORIGIN-CANDIDATES and QUESTIONS)
+
+-- SURFACE (where the reader notices) and ORIGIN (where it likely started) --
+Only the first error is fully reliable; later ones may be cascades.
+S1  tools/delimiter_doctor-fixtures/quote.rkt:12:17: error: unterminated string starting here — everything after it is swallowed (this is where the reader gives up, not necessarily where the defect is)
+      ORIGIN: the construct itself starts at 12:17
+      The reader pairs quotes from the front, so this is only where pairing ran out; the quote that is really wrong is earlier.
+      ORIGIN-CANDIDATES (each = one edit applied, whole file re-lexed; best first):
+        H1 insert `"` at 4:36 (end of line) — string opened at 4:29 currently runs to line 5 → quotes then pair up, but 1 bracket problem(s) remain; no multi-line strings remain
+        H2 delete the stray `"` at 4:29 — string opened at 4:29 currently runs to line 5 → quotes then pair up, but 1 bracket problem(s) remain; no multi-line strings remain
+        H3 delete the stray `"` at 5:22 — string opened at 5:22 currently runs to line 6 → file then lexes BALANCED; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H4 insert `"` at 5:40 (end of line) — string opened at 5:22 currently runs to line 6 → quotes then pair up, but 1 bracket problem(s) remain; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H5 insert `"` at 5:37 (before the trailing closers) — string opened at 5:22 currently runs to line 6 → quotes then pair up, but 2 bracket problem(s) remain; 1 multi-line string(s) remain, so a stray quote may still be hiding
+        H6 insert `"` at 6:22 (before the trailing closers) — string opened at 6:21 currently runs to line 12 → file then lexes BALANCED; 2 multi-line string(s) remain, so a stray quote may still be hiding
+... 4 later error(s) hidden: unreliable after a swallowed region (--json lists all)
+
+-- REPAIR PLAN (simulated; bracket edits only) --
+suppressed: a swallowed region (unterminated string/comment) makes every later bracket observation unreliable, so no bracket plan is simulated; fix the quote/comment first and re-run.
+
+SMELL: string literal(s) spanning lines (legal; a stray `"` often hides here) — informational
+  4:29 → line 5 (2 lines): (check-exn msg (λ () (run "abcdef
+  5:22 → line 6 (2 lines): (check-exn "other" (λ () (void 1)))
+  6:21 → line 12 (7 lines): (displayln "done")))
+
+-- QUESTIONS FOR USER (paste verbatim, one message, then wait) --
+Q1 [line 4] The reader gives up at 12:17, but it pairs quotes from the front, so that is the END of a cascade. Which single edit matches your intent?
+      A: insert `"` at 4:36 (end of line)  (quotes then pair up, but 1 bracket problem(s) remain; no multi-line strings remain)
+      B: delete the stray `"` at 4:29  (quotes then pair up, but 1 bracket problem(s) remain; no multi-line strings remain)
+      C: delete the stray `"` at 5:22  (file then lexes BALANCED; 1 multi-line string(s) remain, so a stray quote may still be hiding)
+      Z: none of these — tell me the line and column where the string must end, or which quote is stray
+      (no default: the answer is required)
+
+-- CONTEXT (d = open-bracket depth at start of line; ? = unreliable after a swallowed region) --
+[best origin candidate]
+      1 d=0  | #lang racket
+      2 d=0  | 
+      3 d=0  | (define (assert x msg)
+>     4 d=1  |   (check-exn msg (λ () (run "abcdef
+      5 d=?  |     (check-exn "other" (λ () (void 1)))
+      6 d=?  |     (displayln "done")))
+      7 d=?  |   (void x))
+[reader site]
+      9 d=?  | (define (run s) s)
+     10 d=?  | (define (check-exn m thunk) (thunk))
+     11 d=?  | 
+>    12 d=?  | (assert 1 "first")
+     13 d=?  | 
+
+AGENT PROTOCOL (Qwen)
+  1. Only `STATUS: BALANCED` ends the task. READ-ERROR and IMBALANCED never do.
+  2. Fix the EARLIEST origin first; later errors are often cascades. Re-run after every edit.
+  3. DECISION APPLY_PLAN -> apply every listed edit, then tell the user.
+     DECISION ASK_USER   -> edit nothing yet; paste QUESTIONS FOR USER verbatim, ONE message, wait.
+     Where a question has no default, do not choose for the user.
+  4. "Lexes BALANCED" proves bracket COUNTS and KINDS only, not that a closer ends the intended
+     form. After any non-strong edit show the diff and ask the user to confirm that the last
+     element before each inserted closer belongs inside that form.
+  5. A string problem comes first: the reader's site is the END of a cascade. Use the
+     ORIGIN-CANDIDATES, ask, edit the confirmed one, re-run. A candidate that lexes BALANCED is
+     not necessarily right (an edit can hide a bracket inside a string); prefer candidates that
+     leave no multi-line strings, and tell the user when the best one still leaves problems.
+  6. Change ONLY the characters named. No re-indenting, reformatting or refactors.
+  7. Never append closers at EOF unless the user chose that option.
+  8. Never guess intent inside quoted data or macro templates: ask.
+  9. SMELL lines are informational. Mention one only if you just wrote or edited that string.
+ 10. READER: DISAGREES -> trust the reader and tell the user the script may be wrong.
+ 11. At STATUS: BALANCED ask the user to run `raco make FILE` and the tests and paste the output.
+  Exit codes: 0 balanced, 1 imbalanced / read error, 2 usage/IO error.
+#+end_src

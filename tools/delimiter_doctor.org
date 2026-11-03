@@ -1,0 +1,49 @@
+#+TITLE: rkt-parens — bracket-balance doctor for modern =#lang racket= sources
+#+AUTHOR: automation
+#+STARTUP: showall
+
+* Invocation
+
+#+begin_src sh
+python3 delimiter_doctor.py src/main.rkt                 # full report
+python3 delimiter_doctor.py src/*.rkt --brief            # one-liners
+python3 delimiter_doctor.py src/main.rkt --json          # structured
+python3 delimiter_doctor.py src/main.rkt --diff          # + diff of the simulated repair
+python3 delimiter_doctor.py src/main.rkt --smells        # + list multi-line string literals (informational)
+python3 delimiter_doctor.py src/main.rkt --reader        # + second opinion from the real Racket reader (needs racket on PATH)
+cat file.rkt | python3 delimiter_doctor.py -
+#+end_src
+
+| Exit | Meaning                                      |
+|------+----------------------------------------------|
+|    0 | ~BALANCED~ (smells are informational)          |
+|    1 | ~IMBALANCED~ or ~READ-ERROR~ (or reader rejects) |
+|    2 | usage / I/O error                            |
+
+* Qwen operating protocol
+
+Before first use in a session run =python3 tools/delimiter_doctor.py --protocol= and follow it.
+Run =python3 tools/delimiter_doctor.py FILE.rkt= on every .rkt file you touched.
+
+* Output sections (reference)
+
+| Section              | Shown when                                 | Purpose                                                                                                  |
+|----------------------+--------------------------------------------+----------------------------------------------------------------------------------------------------------|
+| =STATUS= / =DECISION=    | always                                     | ~BALANCED~ / ~READ-ERROR~ / ~IMBALANCED~; =APPLY_PLAN= only if all edits strong, re-lex clean, no tail ambiguity |
+| =SURFACE= + =ORIGIN=     | delimiter problems                         | reader's complaint plus likely origin; for strings, tested ORIGIN-CANDIDATES (=H1…=)                       |
+| =STRING ESCAPES=       | escape errors                              | reader's own wording, =fix-candidates=                                                                     |
+| =INDENTATION EVIDENCE= | delimiter problems, no swallowed region    | ~dedent~ / ~premature~ signals                                                                               |
+| =PLACEMENTS=           | EOF-append plan exists, unclosed-only file | every single closer that balances (=P1…=), agree/contradict, tree effect                                   |
+| =REPAIR PLAN=          | delimiter problems                         | =E#= edits, =closes:=, =alt:=, =SIMULATION= (counts and kinds only); suppressed after unterminated constructs    |
+| =SMELL=                | =--smells= or string cascade                 | multi-line string literals                                                                               |
+| =QUESTIONS FOR USER=   | non-trivial decisions                      | lettered; a default appears only where plan and question agree                                           |
+| =CONTEXT=              | problems                                   | source windows annotated with depth =d=                                                                    |
+
+* Confidence semantics
+
+| Level  | Trigger                                                                                              | Qwen action                           |
+|--------+------------------------------------------------------------------------------------------------------+---------------------------------------|
+| strong | line at col 0 inside an open form; indented line at top level right after a top-level form closed    | apply, unless an =alt:= line is present |
+| medium | line at/left of an open form that began its own line; ≥2 cols deeper than a just-closed leading form | ask first                             |
+| weak   | line at/left of a mid-line form; 1 col deeper than a just-closed form                                | ask, default leave                    |
+| low    | no indentation clue (mismatched kind, extra closer, EOF append)                                      | ask first, no default                 |

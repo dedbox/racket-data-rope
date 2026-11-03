@@ -1,7 +1,7 @@
-# `rkt_parens` names the last unpaired quote, not the stray one
+# `delimiter_doctor` names the last unpaired quote, not the stray one
 
 **Type:** bug report plus feature request
-**Component:** `rkt_parens`, the delimiter doctor for Racket source files
+**Component:** `delimiter_doctor`, the delimiter doctor for Racket source files
 **Severity:** the primary diagnostic points away from the defect, and the repair plan it
 proposes does not fix the file
 

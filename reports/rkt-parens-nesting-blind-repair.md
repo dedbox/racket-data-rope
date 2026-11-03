@@ -1,7 +1,7 @@
 # `rkt_parens` repairs balance without checking nesting
 
 **Type:** bug report
-**Component:** `tools/parens-doctor.org` (the `rkt_parens` delimiter doctor)
+**Component:** `rkt_parens`, the delimiter doctor for Racket source files
 **Severity:** a repair plan can pass its own simulation and produce code that does not mean
 what the author intended
 
@@ -28,11 +28,12 @@ SIMULATION: after E1..E4 the file lexes BALANCED (weakest edit: medium)
 ```
 
 Applying all four produced a file the doctor called `BALANCED` and `raco make` accepted, and the
-suite then failed at runtime:
+suite then failed at runtime. The location line names the test file being repaired, so it is
+elided here -- the reproduction below needs no access to that tree:
 
 ```text
 type > what a declaration may say > append accepts an identifier or a function literal of any arity
-ERROR  name: check-equal?  location: tests/type-tests.rkt:338:8
+ERROR  name: check-equal?  location: <the test file under repair>:338:8
 compile-message: arity mismatch; the expected number of arguments does not match the given number
   expected: 1
   given: 2
@@ -43,31 +44,56 @@ closes `compile-message` ahead of the `#f` that follows. Placed after `#f`, the 
 `compile-message` too late and `#f` becomes its second argument. Both placements balance; only
 one parses into the intended tree.
 
-The same skew appears in a self-contained reproduction. The intended shape:
+The same skew appears in a reproduction that needs nothing but Racket. One closer is missing --
+the one that should close `compile-message` at the end of the `declaring` line:
 
 ```racket
+#lang racket/base
+
+(define (compile-message s) (list s))
+(define (check-equal? a b) (cons a b))
+(define (declaring v) (cons 'd v))
+(define value '(a b))
+
 (check-equal? (compile-message
-               (declaring value))
+               (declaring value)
                #f)
 ```
 
-With one closer missing, the plan appends it after the last code token, which yields:
+The doctor's plan for that file is:
+
+```text
+E1 [low] insert `)` at 10:19 -- append after the last code token
+    -                #f)
+    +                #f))
+SIMULATION: after E1..E1 the file lexes BALANCED (weakest edit: low)
+```
+
+Applying the plan yields this file, which differs from the one above only in where the closer
+sits:
 
 ```racket
+#lang racket/base
+
+(define (compile-message s) (list s))
+(define (check-equal? a b) (cons a b))
+(define (declaring v) (cons 'd v))
+(define value '(a b))
+
 (check-equal? (compile-message
                (declaring value)
                #f))
 ```
 
-That lexes `BALANCED` and raises the same `compile-message: arity mismatch; expected: 1, given:
-2`. On this reproduction the doctor's tier drops to `[low]`, since there is no indentation
-evidence, and its plan says `insert `)` at 12:19 -- append after the last code token`, with the
-question's default option pointing the other way (`B: some end earlier`). So an agent that
-follows the plan rather than the question's default applies the wrong repair.
+That lexes `BALANCED` and raises `compile-message: arity mismatch; expected: 1, given: 2`. The
+intended repair adds the closer to the `declaring` line instead, and that file runs. With no
+indentation evidence here the doctor's tier is `[low]` and its plan appends after the last code
+token; the question it asks offers `B: some end earlier` as the default, so an agent that follows
+the plan rather than the question applies the wrong repair.
 
 The indentation evidence itself was accurate: in the earlier round it correctly identified a
-missing test-case closer and its column, and it gave no false positives on the compiling files
-in the repo. The gap is placement, not detection.
+missing test-case closer and its column, and it gave no false positives on the files that
+compiled. The gap is placement, not detection.
 
 ## Proposed fix
 

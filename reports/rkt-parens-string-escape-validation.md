@@ -1,7 +1,7 @@
 # `rkt_parens` accepts invalid string escapes
 
 **Type:** feature request
-**Component:** `tools/parens-doctor.org` (the `rkt_parens` delimiter doctor)
+**Component:** `rkt_parens`, the delimiter doctor for Racket source files
 **Severity:** the `BALANCED` verdict is wrong for a file the reader rejects
 
 ## Summary
@@ -19,6 +19,8 @@ This file is delimiter-clean and the doctor agrees, while the reader refuses it:
 ```racket
 #lang racket/base
 
+;; a delimiter-clean file whose regexp literal holds an escape the reader rejects.
+;; The doctor reports BALANCED; the reader names the escape.
 (define rx #rx"pair\?: two arguments")
 
 (displayln (regexp-match rx "pair?: two arguments"))
@@ -44,10 +46,10 @@ escapes are the missing piece, not token recognition.
 
 ## The rule the reader applies
 
-From `reader.html` §1.3.7 in `/usr/share/doc/racket/reference/`: the escapes recognized inside
-a string are `\a`, `\b`, `\t`, `\n`, `\v`, `\f`, `\r`, `\e`, `\"`, `\'`, `\\`, octal `\0`-`\7`
-(one to three digits, the value must be at most 255), `\x` (one or two hex digits), `\u` (up to
-four hex digits, and `\uXXXX\uXXXX` for a surrogate pair), `\U` (up to eight hex digits), and a
+Racket's reader reference (`reader.html` §1.3.7) gives the escapes recognized inside a string:
+`\a`, `\b`, `\t`, `\n`, `\v`, `\f`, `\r`, `\e`, `\"`, `\'`, `\\`, octal `\0`-`\7` (one to three
+digits, the value must be at most 255), `\x` (one or two hex digits), `\u` (up to four hex
+digits, and `\uXXXX\uXXXX` for a surrogate pair), `\U` (up to eight hex digits), and a
 backslash followed by a newline, which is elided. Any other use of a backslash raises
 `exn:fail:read`. Byte-string constants accept the same set except `\u` and `\U`. Confirmed by
 reading each form: `\p`, `\q`, `\s`, `\8`, `\xZZ`, and `\uZZZZ` all fail; `\e`, `\'`, `\1`,

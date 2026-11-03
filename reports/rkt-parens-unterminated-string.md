@@ -1,7 +1,7 @@
 # `rkt_parens` names the last unpaired quote, not the stray one
 
 **Type:** bug report plus feature request
-**Component:** `tools/parens-doctor.org` (the `rkt_parens` delimiter doctor)
+**Component:** `rkt_parens`, the delimiter doctor for Racket source files
 **Severity:** the primary diagnostic points away from the defect, and the repair plan it
 proposes does not fix the file
 
@@ -19,11 +19,12 @@ what makes the defect visible in source, not just at read time.
 
 ## Evidence
 
-Editing a copy of `tests/type-tests.rkt` to drop the closing quote of a string inside a test
-case (line 214 becomes `... "abcdef))))`), the doctor reports:
+Editing a throwaway copy of a rackunit test file removes the closing quote from a string inside a
+test case, so line 214 ends `... "abcdef))))`. The doctor's first line names that copy; the name
+is replaced below with `<the copy under test>`, because the handoff needs no access to that tree:
 
 ```text
-type-tests-cut.rkt:438:22: error: unterminated string starting here -- everything after it is swallowed
+<the copy under test>:438:22: error: unterminated string starting here -- everything after it is swallowed
   ORIGIN: the construct itself starts at 438:22
   HINT: multi-line strings in this file (a stray `"` often creates one): 215:78->line 219, 219:37->line 222,
         224:71->line 228, 228:43->line 238, 239:81->line 244
@@ -72,7 +73,8 @@ unescaped `"`") is the right branch but names no location to look at.
 
 A quote pairing scan that starts at the front pairs `"abcdef` with the quote opening `"other"`,
 pairs `"other"`'s closer with `"done"`'s opener, and leaves `"done"`'s closer running to EOF.
-The doctor calls out that last quote; the missing one is at line 9.
+The doctor calls out that last quote; the quote actually missing is the one that opens the string
+on line 4 above.
 
 ## Feature request: flag multi-line strings as a smell
 
@@ -81,10 +83,10 @@ it, so both forms are legal. Neither is a delimiter problem, and both hide a str
 `SMELL` section that lists string literals spanning more than one source line would make the
 stray quote visible in a file that otherwise reads cleanly.
 
-Measured cost of such a warning in this repo: zero. A scan of `data/rope/`, `tests/`, and
-`benchmarks/` finds no string literal spanning lines and no unterminated quote, so the rule
-would report nothing on the current sources. Exempt from the warning: here-strings (`#<<`) and
-`\<newline>` line continuations, which are intentional multi-line forms.
+Measured cost of such a warning: zero. The tree where the doctor was run holds library sources,
+test files, and benchmark files, and none of them holds a string literal spanning lines or an
+unterminated quote, so the rule would report nothing there today. Exempt from the warning:
+here-strings (`#<<`) and `\<newline>` continuations, which are intentional multi-line forms.
 
 ## Proposed fix
 

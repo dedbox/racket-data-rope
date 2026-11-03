@@ -94,15 +94,16 @@
     (test-suite "the key list"
       (test-case "type-keys is the declared nine-key list"
         (check-equal? type-keys
-                      '(empty length ref slice append width limit merge-limit? chunk?))
+                      '(empty length ref slice append width limit merge-limit chunk?))
         (check-equal? (length type-keys) 9))
-      (test-case "the key list names merge-limit with a question mark"
-        ;; The dictionary field is `merge-limit`, so the key the accessor looks up does
-        ;; not match a field name, and chunk? sits last while declarations record it first.
-        (check-false (memq 'merge-limit type-keys))
+      (test-case "the key list names the dictionary fields"
+        ;; The keys name the dictionary fields, so each one matches what the declaration
+        ;; sets, and `chunk?` sits last while the record lists it first.
         ;; memq returns the tail that starts at the key, so the assertion is non-#f.
-        (check-not-false (memq 'merge-limit? type-keys))
+        (check-not-false (memq 'merge-limit type-keys))
+        (check-false (memq 'merge-limit? type-keys))
         (check-true (eq? (car type-keys) 'empty))
+        (check-true (eq? (list-ref type-keys 7) 'merge-limit))
         (check-true (eq? (list-ref type-keys 8) 'chunk?)))))
 
   ;; =====================================================================

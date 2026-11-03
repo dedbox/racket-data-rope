@@ -7,7 +7,8 @@ lessons that save time.
 ## Layout
 
 - Primary sources `data/rope/` and `data/rope.rkt` · docs `data/rope/scribblings/` · tests `tests/` ·
-  benchmarks `benchmarks/` · design notes `notes/*.org` · checks `tools/lint.sh`
+  benchmarks `benchmarks/` · design notes `notes/*.org` · checks `tools/lint.sh` and
+  `tools/delimiter_doctor.py` (fixtures in `tools/delimiter_doctor-fixtures/`)
 
 ## Commands
 
@@ -25,6 +26,69 @@ Compile the sources and the files about to run before every test or benchmark ru
 silently runs old code (`racket-facts.md` §5). Micro-benchmarks backing an architectural or design
 decision stay in `benchmarks/`. The latency gate is a benchmark, not a test: `raco test tests/`
 never runs it (`ADR-026`).
+
+## Delimiter doctor
+
+`tools/delimiter_doctor.py` checks bracket balance in `.rkt` files; `tools/delimiter_doctor.org`
+is its spec, and `notes/delimiter_doctor-design.org` records how the findings in `reports/` were
+triaged into it. Run it on every `.rkt` file you edited, before compiling, and re-run after each
+repair. Read its operating protocol once per session, before the first run:
+
+```sh
+python3 tools/delimiter_doctor.py --protocol          # the rules to follow while fixing
+python3 tools/delimiter_doctor.py FILE.rkt            # full report
+python3 tools/delimiter_doctor.py FILE.rkt --brief    # one-liners, as the per-edit guard
+python3 tools/delimiter_doctor.py FILE.rkt --diff     # + the simulated repair as a diff
+python3 tools/delimiter_doctor.py FILE.rkt --reader   # cross-check read errors against Racket
+python3 tools/delimiter_doctor.py FILE.rkt --smells   # string literals that span lines
+```
+
+Exit 0 is `STATUS: BALANCED` (smells are informational), exit 1 is `IMBALANCED` or `READ-ERROR`,
+exit 2 is usage or I/O. Only `BALANCED` ends the task, so a repaired file is not done until the
+tool says so and `raco make` passes.
+
+- Earliest origin first: later surface errors are usually cascades. A string cascade is reported
+  at its *end*, so work from `ORIGIN-CANDIDATES` rather than the site the reader names, and prefer
+  a candidate that leaves no multi-line string behind.
+- `DECISION: APPLY_PLAN` means every edit is strong and re-lexes clean: apply them, then tell the
+  user what changed. `DECISION: ASK_USER` means edit nothing until the user answers.
+- Confidence decides the action: `[strong]` applies unless an `alt:` line is present; `[medium]`,
+  `[weak]`, and `[low]` ask first. `[low]` carries no default, so never choose for the user.
+- Change only the characters the report names -- no re-indenting, reformatting, or refactoring
+  while fixing delimiters -- and never append closers at end-of-file unless the user picked that.
+- `SIMULATION` proves bracket counts and kinds, not which form a closer ends. `PLACEMENTS` lists
+  every single closer that balances, each with its `closes:` line and whether indentation agrees or
+  contradicts; when placements contradict, ask instead of taking the one that merely balances.
+- After any non-strong edit, show the diff and confirm that the last element before each inserted
+  closer belongs inside the form it closes. Balance is not meaning: finish with `raco make` and
+  `raco test tests/`.
+- `--reader` is the second opinion on read errors, and `READER: DISAGREES` means trust the reader
+  and tell the user the script may be wrong. It sees read errors only -- not nesting or arity.
+- `SMELL` lines are informational: mention one only when you just wrote or edited that string, and
+  never treat one as a failure.
+- After editing `tools/delimiter_doctor.py` itself, replay the fixtures: run the tool on each `.rkt`
+  under `tools/delimiter_doctor-fixtures/` and compare the full report with that file's block in
+  `EXPECTED.org`, which pins the report text.
+
+### Passing the doctor's questions to the user
+
+`QUESTIONS FOR USER` is written to go in one message. Ask it with the `question` tool rather than
+as prose in a reply:
+
+- One `question` call carrying every `Q#`, so the user answers in one round trip instead of one
+  message per question.
+- Use the doctor's question text verbatim, including the line and column it names; `header` is a
+  short label naming the file and the line, within 30 characters.
+- Keep each option's text verbatim, including the parenthetical outcome the report appends. Reorder
+  only so the option marked `<- default` sits first, and add `(Recommended)` to its label. Where the
+  report says "no default: the answer is required", set no option recommended -- guessing is the
+  failure the protocol forbids.
+- Drop the option that invites a free-form answer (`Z: none of these ...` or `C: other ...`): the
+  `question` tool supplies that answer itself, so keeping it duplicates the choice.
+- Ask only about non-strong items. `[strong]` edits go unasked and are reported afterwards; a
+  `BALANCED` file needs no question at all.
+- Wait for the answer before touching anything the report flagged, then apply exactly the
+  placements chosen and re-run the doctor on that file.
 
 ## Test files
 

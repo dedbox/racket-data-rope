@@ -16,13 +16,17 @@ lessons that save time.
 raco setup --pkgs data-rope                             # sources + metadata + docs
 raco setup --no-info-domain --no-docs --pkgs data-rope  # sources only
 raco make data/rope/some-file.rkt                       # one source file
+raco make tests/X.rkt                                   # a test and its dependencies
+raco make benchmarks/X.rkt                              # a benchmark and its dependencies
 raco test tests/                                        # all tests
 raco test tests/X.rkt                                   # one test file
-raco cover -p -b data-rope                              # report -> coverage/
+raco cover -b data/rope.rkt data/rope tests             # report -> coverage/
 racket benchmarks/latency-gate.rkt                      # latency gate vs notes/m0.org §3.2 row 12 ceilings
 ```
 
-Compile the sources and the files about to run before every test or benchmark run: a stale `.zo`
+Setup builds `data/` only: every dev directory carries an `info.rkt` that omits itself
+(`ADR-027`), so setup never compiles `tests/`, `benchmarks/`, or `tools/`. Compile the
+sources and the files about to run before every test or benchmark run: a stale `.zo`
 silently runs old code (`racket-facts.md` §5). Micro-benchmarks backing an architectural or design
 decision stay in `benchmarks/`. The latency gate is a benchmark, not a test: `raco test tests/`
 never runs it (`ADR-026`).

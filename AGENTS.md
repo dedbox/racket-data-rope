@@ -114,10 +114,14 @@ Three tiers: module header, section header, definition doc. They govern Racket c
 
 ## Typography
 
-`λ` not `lambda`; prose keeps ASCII `->`, never unicode arrows; no LaTeX unless a formula cannot be
-expressed in Unicode; Greek letters (`τ`, `σ`, `ρ`, `α`) are fine. Comments may use `≤` and `≥`; code
-keeps `<=` and `>=`. `→` appears only inside notation lines (`slice -- chunk nat nat → chunk`) and `⇒`
-only in `Precondition:` lines.
+Unicode is allowed in prose wherever prose lives: `.rkt` comments, `notes/*.org`, and markdown
+(`racket-facts.md`, `AGENTS.md`, `reports/*.md`). Greek letters (`τ`, `σ`, `ρ`, `α`), `≤`, `≥`,
+`§`, and `⟦verify⟧` are all available, and that list is illustrative, not a closed set. `λ` not
+`lambda` (lint checks it); code keeps `<=` and `>=`. Prose keeps ASCII `->`, never unicode arrows;
+`→` appears only inside notation lines (`slice -- chunk nat nat → chunk`) and `⇒` only in
+`Precondition:` lines. No LaTeX unless a formula cannot be expressed in Unicode. A unicode
+character counts as one column, so the prose band and the 93-column cap (§Prose) measure `≤` the
+same way as `<=`.
 
 ## Design notes
 

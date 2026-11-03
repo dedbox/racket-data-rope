@@ -124,9 +124,8 @@ AGENT PROTOCOL (Qwen)
 
 * tools/delimiter_doctor-fixtures/quote-ok.rkt
 
-=
 #+begin_src text
-== delimiter_doctor: tools/delimiter_doctor-fixtures/quote-ok.rkt ===
+=== delimiter_doctor: tools/delimiter_doctor-fixtures/quote-ok.rkt ===
 STATUS: IMBALANCED (13 lines, 5 delimiter error(s), 0 escape error(s))
 DECISION: ASK_USER (bracket plan suppressed: fix the quote/comment problem first; see ORIGIN-CANDIDATES and QUESTIONS)
 
@@ -200,9 +199,8 @@ AGENT PROTOCOL (Qwen)
 
 * tools/delimiter_doctor-fixtures/quote.rkt
 
-=
 #+begin_src text
-== delimiter_doctor: tools/delimiter_doctor-fixtures/quote.rkt ===
+=== delimiter_doctor: tools/delimiter_doctor-fixtures/quote.rkt ===
 STATUS: IMBALANCED (13 lines, 5 delimiter error(s), 0 escape error(s))
 DECISION: ASK_USER (bracket plan suppressed: fix the quote/comment problem first; see ORIGIN-CANDIDATES and QUESTIONS)
 

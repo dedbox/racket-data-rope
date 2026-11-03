@@ -1,0 +1,857 @@
+#+TITLE: rkt-parens — bracket-balance doctor for modern =#lang racket= sources
+#+AUTHOR: automation
+#+STARTUP: showall
+
+* Overview
+
+| Property        | Value                                                                                   |
+|-----------------+-----------------------------------------------------------------------------------------|
+| File            | =rkt_parens.py= (Python ≥ 3.8, stdlib only)                                             |
+| Called by       | Qwen, via shell                                                                         |
+| Exit codes      | 0 → balanced · 1 → imbalanced · 2 → usage / I/O error                                   |
+| Lexer           | strings, =#\(= chars, =#| |#= (nested), =#;=, =#<<TAG= here-strings, =|sym|=, =\= escapes, =#lang= line |
+| Bracket kinds   | =( )=, =[ ]=, ={ }= must match by kind                                                  |
+| Surface error   | where the reader notices (extra closer, mismatched closer, EOF while open)              |
+| Origin evidence | indentation: ~dedent~ (line starts at/left of a still-open form) and ~premature~ (line indented deeper than a form just closed) |
+| Confidence      | strong › medium › weak › low                                                            |
+| Repair planning | simulates the minimal bracket edits, re-lexes the result, reports ~verified~ or not     |
+| Questions       | pre-worded, lettered, for every non-strong edit or unresolved error                     |
+
+* Invocation
+
+#+begin_src sh
+python3 rkt_parens.py src/main.rkt                 # human/LLM-readable report
+python3 rkt_parens.py src/*.rkt --brief            # compiler-style one-liners only
+python3 rkt_parens.py src/main.rkt --json          # structured output
+python3 rkt_parens.py src/main.rkt --diff          # + unified diff of the simulated repair
+python3 rkt_parens.py src/main.rkt --context 5     # wider annotated source window
+cat file.rkt | python3 rkt_parens.py -             # stdin
+#+end_src
+
+* Qwen operating protocol
+
+1. Run the tool on every file you touched before reporting success.
+2. Work on the ~earliest~ origin first; later surface errors are often cascades. Re-run after every edit.
+3. Edits tagged =[strong]= may be applied without asking; tell the user afterwards.
+4. For every =[medium]=, =[weak]=, =[low]= edit, and for every error with no edit, ~stop~. Paste the =QUESTIONS FOR USER= section verbatim in one message and wait for the answers.
+5. Change ~only~ the brackets named in the plan. No re-indenting, reformatting, or refactoring.
+6. Never append closers at EOF unless the user picked that option.
+7. Never guess intent inside quoted data, macro templates, or =syntax-rules= patterns. Ask.
+8. Finish when the tool prints =STATUS: BALANCED=. Then run =raco make FILE=.
+
+* Script
+
+#+begin_src python
+#!/usr/bin/env python3
+"""rkt_parens — locate WHERE a Racket file's brackets go wrong and WHERE they started going wrong.
+
+Exit codes: 0 balanced, 1 imbalanced, 2 usage/IO error.
+"""
+from __future__ import annotations
+
+import argparse
+import bisect
+import difflib
+import json
+import re
+import sys
+from dataclasses import dataclass
+from typing import Optional
+
+OPEN = {"(": ")", "[": "]", "{": "}"}
+CLOSE = {v: k for k, v in OPEN.items()}
+WS = " \t\r\n\f\v"
+DELIMS = set(WS + "()[]{}\",'`;")
+PREFIX_RE = re.compile(r"(?:#[A-Za-z0-9]*|[',`@])*$")
+HEAD_RE = re.compile(r"""[ \t]*([^\s()\[\]{}",'`;]{1,32})""")
+LANG_RE = re.compile(r"#(?:lang|!)[^\n]*")
+CONF_RANK = {"strong": 3, "medium": 2, "weak": 1, "low": 0}
+
+PROTOCOL = """\
+AGENT PROTOCOL (Qwen)
+  1. Fix the EARLIEST origin first. Later surface errors are often cascades. Re-run after every edit.
+  2. Edits tagged [strong] may be applied without asking; tell the user afterwards.
+  3. For every [medium]/[weak]/[low] edit and every error without an edit: STOP. Paste the
+     QUESTIONS FOR USER section verbatim, in ONE message, with lettered options, and wait.
+  4. Change ONLY the brackets named in the plan. No re-indenting, no reformatting, no refactors.
+  5. Do not append closers at EOF unless the user chose that option.
+  6. Never guess intent inside quoted data or macro templates: ask.
+  7. Done only when this tool prints STATUS: BALANCED; then ask the user to run `raco make FILE`
+     locally and paste the output.
+  Exit codes: 0 balanced, 1 imbalanced, 2 usage/IO error.
+"""
+
+
+@dataclass
+class Opener:
+    ch: str
+    line: int
+    col: int
+    vcol: int          # visual column of the form's first char incl. quote/#hash prefix
+    leading: bool      # form is the first thing on its line
+    head: str
+    snippet: str
+    off: int
+    evidence: Optional[dict] = None
+
+    def label(self) -> str:
+        h = (" " + self.head) if self.head else ""
+        return "`%s%s` at %d:%d" % (self.ch, h, self.line, self.col)
+
+
+class Scanner:
+    def __init__(self, text: str, repair: bool = False):
+        self.t = text
+        self.n = len(text)
+        self.repair = repair
+        self.lines = text.split("\n")
+        self.starts = [0] + [m.end() for m in re.finditer("\n", text)]
+        self.stack: list[Opener] = []
+        self.problems: list[dict] = []
+        self.edits: list[dict] = []
+        self.dedent_ev: list[dict] = []
+        self.premature_ev: list[dict] = []
+        self.recent: list[tuple] = []
+        self.seen_line = 0
+        self.last_end = 0
+        self.depth_at: dict[int, int] = {}
+        self.depth_filled = 0
+        self.long_strings: list[tuple] = []
+
+    # ---------- position helpers ----------
+    def line_of(self, off: int) -> int:
+        return bisect.bisect_right(self.starts, off)
+
+    def col_of(self, off: int) -> int:
+        return off - self.starts[self.line_of(off) - 1] + 1
+
+    def vcol(self, off: int) -> int:
+        ln = self.line_of(off)
+        return len(self.t[self.starts[ln - 1]:off].expandtabs(8))
+
+    def sync(self, ln: int) -> None:
+        while self.depth_filled < ln:
+            self.depth_filled += 1
+            self.depth_at[self.depth_filled] = len(self.stack)
+
+    def prob(self, kind: str, off: int, **kw) -> dict:
+        p = dict(kind=kind, off=off, line=self.line_of(off), col=self.col_of(off), **kw)
+        self.problems.append(p)
+        return p
+
+    def edit(self, op, off, text, conf, reason, at_end=None, meta=None, ev=None) -> dict:
+        if at_end is not None:
+            ln = self.line_of(at_end - 1)
+            col = self.col_of(at_end - 1) + 1
+        else:
+            ln = self.line_of(off)
+            col = self.col_of(off)
+        e = dict(op=op, off=off, text=text, conf=conf, reason=reason,
+                 line=ln, col=col, meta=meta or {}, ev=ev)
+        self.edits.append(e)
+        return e
+
+    # ---------- token bookkeeping ----------
+    def tok(self, i: int, check: bool = True) -> int:
+        ln = self.line_of(i)
+        self.sync(ln)
+        if ln != self.seen_line:
+            self.seen_line = ln
+            if check:
+                self.line_start(i, ln)
+        return ln
+
+    def end_tok(self, j: int, code: bool = True) -> None:
+        if code:
+            self.last_end = j
+        self.seen_line = max(self.seen_line, self.line_of(max(j - 1, 0)))
+
+    # ---------- indentation evidence ----------
+    def line_start(self, i: int, ln: int) -> None:
+        k = self.vcol(i)
+        if self.stack:
+            sus = []
+            for o in reversed(self.stack):
+                if o.vcol >= k:
+                    sus.append(o)
+                else:
+                    break
+            if sus:
+                self.on_dedent(sus, k, ln)
+                return
+        self.check_premature(k, ln)
+
+    def on_dedent(self, sus: list, k: int, ln: int) -> None:
+        leading = [o for o in sus if o.leading]
+        conf = "strong" if k == 0 else ("medium" if leading else "weak")
+        prev_end = self.last_end
+        pl = self.line_of(prev_end - 1)
+        pc = self.col_of(prev_end - 1) + 1
+        closers = "".join(OPEN[o.ch] for o in sus)
+        ev = dict(kind="dedent", line=ln, indent=k, conf=conf, count=len(sus),
+                  closers=closers, insert_line=pl, insert_col=pc,
+                  openers=[[o.line, o.col, o.label()] for o in sus])
+        new = False
+        for o in sus:
+            if o.evidence is None:
+                o.evidence = ev
+                new = True
+        if new:
+            self.dedent_ev.append(ev)
+        if self.repair and conf in ("strong", "medium"):
+            for _ in sus:
+                self.stack.pop()
+            self.edit("insert", prev_end, closers, conf,
+                      "line %d starts at col %d, at/left of %d open form(s)" % (ln, k, len(sus)),
+                      at_end=prev_end, ev=ev)
+
+    def check_premature(self, k: int, ln: int) -> None:
+        run = []
+        expect = self.last_end
+        for op, off in reversed(self.recent):
+            if self.t[off + 1:expect].strip() == "":
+                run.append((op, off))
+                expect = off
+            else:
+                break
+        if not run:
+            return
+        op, off = run[0]  # outermost, popped last
+        if not op.leading or k <= op.vcol:
+            return
+        if not self.stack:
+            conf = "strong"
+        else:
+            conf = "medium" if k - op.vcol >= 2 else "weak"
+        ev = dict(kind="premature", line=ln, indent=k, conf=conf, closer_off=off,
+                  closer_line=self.line_of(off), closer_col=self.col_of(off),
+                  closer=self.t[off], run="".join(self.t[o] for _, o in reversed(run)),
+                  op_line=op.line, op_col=op.col, op_label=op.label(), op_vcol=op.vcol)
+        self.premature_ev.append(ev)
+        if self.repair and conf in ("strong", "medium"):
+            self.stack.append(op)
+            self.recent.pop()
+            self.edit("delete", off, self.t[off], conf,
+                      "line %d is indented deeper than %s, closed just before" % (ln, op.label()),
+                      ev=ev)
+
+    # ---------- lexemes ----------
+    def do_open(self, i: int) -> None:
+        ln = self.tok(i)
+        start = self.starts[ln - 1]
+        line = self.lines[ln - 1]
+        pre = line[: i - start]
+        m = PREFIX_RE.search(pre)
+        ps = m.start() if m else len(pre)
+        vc = len(pre[:ps].expandtabs(8))
+        leading = pre[:ps].strip() == ""
+        hm = HEAD_RE.match(line[i - start + 1:])
+        head = hm.group(1) if hm else ""
+        self.stack.append(Opener(self.t[i], ln, i - start + 1, vc, leading, head,
+                                 line.strip()[:90], i))
+        self.end_tok(i + 1)
+
+    def do_close(self, i: int) -> None:
+        ln = self.tok(i, check=False)
+        ch = self.t[i]
+        snippet = self.lines[ln - 1].strip()[:90]
+        if not self.stack:
+            self.prob("extra_closer", i, ch=ch, snippet=snippet)
+            if self.repair:
+                self.edit("delete", i, ch, "low", "closer with no open form")
+            self.end_tok(i + 1)
+            return
+        top = self.stack[-1]
+        if OPEN[top.ch] == ch:
+            self.stack.pop()
+            self.recent.append((top, i))
+            if len(self.recent) > 256:
+                del self.recent[:128]
+        else:
+            depth = None
+            for d, o in enumerate(reversed(self.stack)):
+                if OPEN[o.ch] == ch:
+                    depth = d
+                    break
+            skipped = list(reversed(self.stack))[:depth] if depth else []
+            self.prob("mismatch", i, ch=ch, expected=OPEN[top.ch], opener=top,
+                      deeper=depth, skipped=skipped, snippet=snippet)
+            if depth is not None:
+                if self.repair:
+                    self.edit("insert", i, "".join(OPEN[o.ch] for o in skipped), "low",
+                              "closer matches an outer opener; inner forms unclosed",
+                              meta=dict(kind="deeper", ch=ch,
+                                        skipped=[o.label() for o in skipped]))
+                for _ in range(depth + 1):
+                    self.stack.pop()
+            else:
+                if self.repair:
+                    self.edit("replace", i, OPEN[top.ch], "low",
+                              "closer kind differs from its opener",
+                              meta=dict(kind="subst", old=ch,
+                                        opener=[top.line, top.col, top.ch]))
+                self.stack.pop()
+        self.end_tok(i + 1)
+
+    def do_string(self, i: int) -> int:
+        t, n = self.t, self.n
+        ln = self.tok(i)
+        j = i + 1
+        closed = False
+        while j < n:
+            c = t[j]
+            if c == "\\":
+                j += 2
+                continue
+            if c == '"':
+                closed = True
+                break
+            j += 1
+        if not closed:
+            self.prob("unterminated", i, what="string")
+            self.end_tok(n)
+            return n
+        j += 1
+        end_ln = self.line_of(j - 1)
+        if end_ln - ln >= 3:
+            self.long_strings.append((ln, self.col_of(i), end_ln))
+        self.end_tok(j)
+        return j
+
+    def do_block(self, i: int) -> int:
+        t, n = self.t, self.n
+        self.tok(i, check=False)
+        depth, j = 1, i + 2
+        while j < n and depth:
+            if t.startswith("#|", j):
+                depth += 1
+                j += 2
+            elif t.startswith("|#", j):
+                depth -= 1
+                j += 2
+            else:
+                j += 1
+        if depth:
+            self.prob("unterminated", i, what="block comment #| ... |#")
+            j = n
+        self.end_tok(j, code=False)
+        return j
+
+    def do_here(self, i: int) -> int:
+        t, n = self.t, self.n
+        self.tok(i)
+        eol = t.find("\n", i)
+        if eol < 0:
+            self.prob("unterminated", i, what="here-string")
+            self.end_tok(n)
+            return n
+        tag = t[i + 3:eol].rstrip("\r")
+        pos = eol + 1
+        while pos <= n:
+            e = t.find("\n", pos)
+            e = n if e < 0 else e
+            if t[pos:e].rstrip("\r") == tag:
+                self.end_tok(e)
+                return e
+            if e >= n:
+                break
+            pos = e + 1
+        self.prob("unterminated", i, what="here-string (terminator line '%s' never found)" % tag)
+        self.end_tok(n)
+        return n
+
+    def do_char(self, i: int) -> int:
+        t, n = self.t, self.n
+        self.tok(i)
+        j = i + 2
+        if j < n:
+            if t[j].isalnum():
+                while j < n and t[j].isalnum():
+                    j += 1
+            else:
+                j += 1
+        self.end_tok(j)
+        return j
+
+    def do_atom(self, i: int) -> int:
+        t, n = self.t, self.n
+        self.tok(i)
+        j = i
+        while j < n:
+            c = t[j]
+            if c == "\\":
+                j += 2
+                continue
+            if c == "|":
+                k = t.find("|", j + 1)
+                if k < 0:
+                    self.prob("unterminated", j, what="|symbol| quote")
+                    j = n
+                    break
+                j = k + 1
+                continue
+            if c in DELIMS:
+                break
+            j += 1
+        j = min(max(j, i + 1), n)
+        self.end_tok(j)
+        return j
+
+    # ---------- driver ----------
+    def run(self) -> None:
+        t, n = self.t, self.n
+        i = 1 if t.startswith("\ufeff") else 0
+        while True:
+            m = LANG_RE.match(t, i)
+            if not m:
+                break
+            i = m.end()
+            self.seen_line = self.line_of(max(i - 1, 0))
+            while i < n and t[i] in WS:
+                i += 1
+        while i < n:
+            c = t[i]
+            if c in WS:
+                i += 1
+            elif c == ";":
+                self.tok(i, check=False)
+                e = t.find("\n", i)
+                i = n if e < 0 else e
+            elif c == "#":
+                nx = t[i + 1:i + 2]
+                if nx == "|":
+                    i = self.do_block(i)
+                elif t.startswith("#<<", i):
+                    i = self.do_here(i)
+                elif nx == "\\":
+                    i = self.do_char(i)
+                elif nx == ";":
+                    self.tok(i)
+                    self.end_tok(i + 2)
+                    i += 2
+                else:
+                    i = self.do_atom(i)
+            elif c == '"':
+                i = self.do_string(i)
+            elif c in OPEN:
+                self.do_open(i)
+                i += 1
+            elif c in CLOSE:
+                self.do_close(i)
+                i += 1
+            elif c in "'`,":
+                self.tok(i)
+                self.end_tok(i + 1)
+                i += 1
+            else:
+                i = self.do_atom(i)
+        self.sync(len(self.lines))
+        if self.stack:
+            labels = [o.label() for o in self.stack]
+            for o in self.stack:
+                self.prob("unclosed", o.off, opener=o)
+            if self.repair:
+                closers = "".join(OPEN[o.ch] for o in reversed(self.stack))
+                self.edit("insert", self.last_end, closers, "low",
+                          "append after the last code token",
+                          at_end=self.last_end, meta=dict(kind="eof", labels=labels))
+
+
+# ====================== analysis ======================
+def apply_edits(text: str, edits: list) -> str:
+    out = text
+    for e in sorted(edits, key=lambda e: e["off"], reverse=True):
+        o = e["off"]
+        if e["op"] == "insert":
+            out = out[:o] + e["text"] + out[o:]
+        elif e["op"] == "delete":
+            out = out[:o] + out[o + len(e["text"]):]
+        else:
+            out = out[:o] + e["text"] + out[o + 1:]
+    return out
+
+
+def analyze(path: str, text: str) -> dict:
+    s1 = Scanner(text)
+    s1.run()
+    res = dict(path=path, text=text, s1=s1, s2=None, repaired=text, s3=None, verified=True)
+    if not s1.problems:
+        return res
+    s2 = Scanner(text, repair=True)
+    s2.run()
+    repaired = apply_edits(text, s2.edits)
+    s3 = Scanner(repaired)
+    s3.run()
+    res.update(s2=s2, repaired=repaired, s3=s3, verified=not s3.problems)
+    return res
+
+
+def ev_text(ev: dict) -> str:
+    if ev["kind"] == "dedent":
+        ops = ", ".join("%d:%d" % (a, b) for a, b, _ in ev["openers"])
+        return ("[%s] line %d starts at col %d, at/left of %d still-open form(s) (%s); they probably "
+                "should have closed earlier → insert `%s` at %d:%d (right after the last code token "
+                "before line %d)" % (ev["conf"], ev["line"], ev["indent"], ev["count"], ops,
+                                     ev["closers"], ev["insert_line"], ev["insert_col"], ev["line"]))
+    return ("[%s] line %d is indented to col %d, deeper than %s, which was closed at %d:%d "
+            "(closer run `%s`) → that closer is probably premature: delete one `%s` at %d:%d"
+            % (ev["conf"], ev["line"], ev["indent"], ev["op_label"], ev["closer_line"],
+               ev["closer_col"], ev["run"], ev["closer"], ev["closer_line"], ev["closer_col"]))
+
+
+def surface_line(path: str, p: dict, nl: int) -> str:
+    k = p["kind"]
+    if k == "extra_closer":
+        return "%s:%d:%d: error: extra `%s` — no form is open here" % (path, p["line"], p["col"], p["ch"])
+    if k == "mismatch":
+        o = p["opener"]
+        s = "%s:%d:%d: error: `%s` found where `%s` was needed to close %s" % (
+            path, p["line"], p["col"], p["ch"], p["expected"], o.label())
+        if p["deeper"] is not None:
+            s += "; `%s` matches an outer opener, so %d inner form(s) are unclosed: %s" % (
+                p["ch"], p["deeper"], ", ".join(x.label() for x in p["skipped"]))
+        else:
+            s += "; no open form takes `%s` (probable wrong bracket kind)" % p["ch"]
+        return s
+    if k == "unclosed":
+        o = p["opener"]
+        return "%s:%d:%d: error: unclosed %s — EOF (line %d) reached while still inside it" % (
+            path, o.line, o.col, o.label(), nl)
+    return "%s:%d:%d: error: unterminated %s starting here — everything after it is swallowed" % (
+        path, p["line"], p["col"], p["what"])
+
+
+def origin_for(s1: Scanner, p: dict) -> list:
+    out = []
+    k = p["kind"]
+    if k == "unclosed":
+        o = p["opener"]
+        out.append("ORIGIN: opened at %d:%d | %s" % (o.line, o.col, o.snippet))
+        if o.evidence:
+            out.append("EVIDENCE: " + ev_text(o.evidence))
+        else:
+            out.append("EVIDENCE: none — no later line starts at/left of this opener, so either the "
+                       "closer is missing at the END of the enclosed code, or this opener is stray")
+    elif k in ("extra_closer", "mismatch"):
+        cands = [e for e in s1.premature_ev if e["closer_off"] < p["off"]][-2:]
+        for e in reversed(cands):
+            out.append("ORIGIN-CANDIDATE: " + ev_text(e))
+        if k == "mismatch" and p["opener"].evidence:
+            out.append("ORIGIN-CANDIDATE: " + ev_text(p["opener"].evidence))
+        if not out:
+            out.append("ORIGIN-CANDIDATE: none from indentation; see CONTEXT and QUESTIONS")
+    else:
+        out.append("ORIGIN: the construct itself starts at %d:%d" % (p["line"], p["col"]))
+        if s1.long_strings:
+            ls = ", ".join("%d:%d→line %d" % a for a in s1.long_strings[:5])
+            out.append("HINT: multi-line strings in this file (a stray `\"` often creates one): " + ls)
+    return out
+
+
+def edit_preview(s: Scanner, e: dict) -> tuple:
+    txt = s.lines[e["line"] - 1].rstrip("\r")
+    col = e["col"]
+    if e["op"] == "insert":
+        new = txt[:col - 1] + e["text"] + txt[col - 1:]
+    elif e["op"] == "delete":
+        new = txt[:col - 1] + txt[col - 1 + len(e["text"]):]
+    else:
+        new = txt[:col - 1] + e["text"] + txt[col:]
+    return txt, new
+
+
+def build_questions(res: dict) -> list:
+    s1, s2 = res["s1"], res["s2"]
+    qs: list = []
+
+    def add(where, ask, opts, default):
+        qs.append(dict(id="Q%d" % (len(qs) + 1), where=where, ask=ask, options=opts, default=default))
+
+    if s2 is None:
+        return qs
+    handled_ev = set()
+    for e in sorted(s2.edits, key=lambda e: e["off"]):
+        ev, m = e.get("ev"), e.get("meta", {})
+        if ev:
+            handled_ev.add((ev["kind"], ev["line"]))
+        if ev and ev["kind"] == "dedent" and e["conf"] != "strong":
+            ops = ", ".join("%d:%d" % (a, b) for a, b, _ in ev["openers"])
+            add("line %d" % ev["line"],
+                "Line %d starts at column %d, level with or left of %d still-open form(s) opened at %s. "
+                "Should they be closed before line %d?" % (ev["line"], ev["indent"], ev["count"], ops, ev["line"]),
+                ["A: yes — insert `%s` at %d:%d (script proposal)" % (ev["closers"], ev["insert_line"], ev["insert_col"]),
+                 "B: no — the forms continue; line %d is merely mis-indented" % ev["line"],
+                 "C: other — tell me after which line each form must close"], "A")
+        elif ev and ev["kind"] == "premature" and e["conf"] != "strong":
+            add("line %d" % ev["line"],
+                "Line %d is indented to column %d, deeper than %s, which closes at %d:%d. "
+                "Was that closing bracket meant to end the form?" % (
+                    ev["line"], ev["indent"], ev["op_label"], ev["closer_line"], ev["closer_col"]),
+                ["A: no — delete one `%s` at %d:%d so the form keeps going (script proposal)" % (
+                    ev["closer"], ev["closer_line"], ev["closer_col"]),
+                 "B: yes — the form ends there; line %d should be re-indented to column %d" % (ev["line"], ev["op_vcol"]),
+                 "C: other — tell me which form line %d belongs to" % ev["line"]], "A")
+        elif e["conf"] == "low":
+            k = m.get("kind")
+            where = "line %d" % e["line"]
+            if e["op"] == "delete":
+                add(where, "`%s` at %d:%d closes nothing. What is intended?" % (e["text"], e["line"], e["col"]),
+                    ["A: delete it (script proposal)",
+                     "B: an opener is missing earlier — tell me which form should start where",
+                     "C: other"], "A")
+            elif k == "subst":
+                ol, oc, och = m["opener"]
+                add(where, "`%s` at %d:%d ends the form opened by `%s` at %d:%d. Which bracket is wrong?" % (
+                    m["old"], e["line"], e["col"], och, ol, oc),
+                    ["A: closer should be `%s` (script proposal)" % e["text"],
+                     "B: the opener `%s` at %d:%d should be `%s`" % (och, ol, oc, CLOSE.get(m["old"], "?")),
+                     "C: other"], "A")
+            elif k == "deeper":
+                add(where, "`%s` at %d:%d matches an outer form, but inner form(s) are still open: %s. "
+                    "Where do those inner forms end?" % (m["ch"], e["line"], e["col"], ", ".join(m["skipped"])),
+                    ["A: right before this `%s` — insert `%s` (script proposal)" % (m["ch"], e["text"]),
+                     "B: earlier — tell me the line after which each should close",
+                     "C: this `%s` is the wrong bracket — tell me what it should be" % m["ch"]], "A")
+            elif k == "eof":
+                add("end of file",
+                    "These forms are never closed and no indentation shows where they end: %s. What now?"
+                    % "; ".join(m["labels"]),
+                    ["A: append `%s` after line %d (script proposal; only if the whole rest of the file belongs inside)" % (
+                        e["text"], e["line"]),
+                     "B: some end earlier — tell me the line after which each should close",
+                     "C: one of these openers is stray — tell me which to delete"], "B")
+    for ev in s1.dedent_ev + s1.premature_ev:
+        if ev["conf"] == "weak" and (ev["kind"], ev["line"]) not in handled_ev:
+            if ev["kind"] == "dedent":
+                ops = ", ".join("%d:%d" % (a, b) for a, b, _ in ev["openers"])
+                add("line %d" % ev["line"],
+                    "(weak signal) Line %d starts at column %d, left of mid-line form(s) opened at %s. "
+                    "Intentional dedent, or should they have closed earlier?" % (ev["line"], ev["indent"], ops),
+                    ["A: intentional — leave as is (default)",
+                     "B: close them earlier — insert `%s` at %d:%d" % (ev["closers"], ev["insert_line"], ev["insert_col"])], "A")
+            else:
+                add("line %d" % ev["line"],
+                    "(weak signal) Line %d is indented one column deeper than %s which closes at %d:%d. "
+                    "Is the closing bracket correct?" % (ev["line"], ev["op_label"], ev["closer_line"], ev["closer_col"]),
+                    ["A: correct — leave as is (default)",
+                     "B: premature — delete one `%s` at %d:%d" % (ev["closer"], ev["closer_line"], ev["closer_col"])], "A")
+    for p in s1.problems:
+        if p["kind"] == "unterminated":
+            add("line %d" % p["line"],
+                "An unterminated %s begins at %d:%d. What is intended?" % (p["what"], p["line"], p["col"]),
+                ["A: it is a stray delimiter — delete it",
+                 "B: it should end — tell me the line and column where it must end",
+                 "C: an earlier string/comment ended too early (look for an unescaped `\"`) — tell me where"], "B")
+    return qs
+
+
+def ctx(s: Scanner, center: int, radius: int) -> list:
+    lo, hi = max(1, center - radius), min(len(s.lines), center + radius)
+    out = []
+    for ln in range(lo, hi + 1):
+        d = s.depth_at.get(ln, "?")
+        txt = s.lines[ln - 1].rstrip("\r")[:160]
+        out.append("%s%6d d=%-3s| %s" % (">" if ln == center else " ", ln, d, txt))
+    return out
+
+
+def decision(res: dict) -> str:
+    s2 = res["s2"]
+    if s2 is None:
+        return "NO_ACTION"
+    if (res["verified"] and s2.edits
+            and all(e["conf"] == "strong" for e in s2.edits)):
+        return "APPLY_PLAN (all edits strong and verified; tell the user afterwards)"
+    return "ASK_USER (see QUESTIONS FOR USER; do not edit non-strong items before the answer)"
+
+
+def render(res: dict, radius: int, show_diff: bool, max_problems: int) -> list:
+    path, s1, s2 = res["path"], res["s1"], res["s2"]
+    nl = len(s1.lines)
+    if not s1.problems:
+        return ["%s: STATUS: BALANCED (%d lines)" % (path, nl)]
+    L = ["=== rkt_parens: %s ===" % path,
+         "STATUS: IMBALANCED (%d lines, %d surface error(s))" % (nl, len(s1.problems)),
+         "DECISION: " + decision(res), ""]
+    probs = sorted(s1.problems, key=lambda p: p["off"] if p["kind"] != "unclosed" else s1.n + p["off"])
+    L.append("-- SURFACE (where the reader notices) and ORIGIN (where it likely started) --")
+    L.append("Only the first error is fully reliable; later ones may be cascades.")
+    for i, p in enumerate(probs[:max_problems], 1):
+        L.append("S%d  %s" % (i, surface_line(path, p, nl)))
+        for o in origin_for(s1, p):
+            L.append("      " + o)
+    if len(probs) > max_problems:
+        L.append("... %d more error(s) omitted (--max-problems)" % (len(probs) - max_problems))
+    L.append("")
+    L.append("-- INDENTATION EVIDENCE (all, by line) --")
+    evs = sorted(s1.dedent_ev + s1.premature_ev, key=lambda e: (e["line"], -CONF_RANK[e["conf"]]))
+    if not evs:
+        L.append("none")
+    for e in evs[:15]:
+        L.append("  " + ev_text(e))
+    L.append("")
+    L.append("-- REPAIR PLAN (simulated; minimal bracket edits only) --")
+    if not s2.edits:
+        L.append("no automatic edit available")
+    for i, e in enumerate(sorted(s2.edits, key=lambda e: e["off"]), 1):
+        before, after = edit_preview(s2, e)
+        L.append("E%d [%s] %s `%s` at %d:%d — %s" % (i, e["conf"], e["op"], e["text"], e["line"], e["col"], e["reason"]))
+        L.append("    - %s" % before[:160])
+        L.append("    + %s" % after[:160])
+    if res["verified"]:
+        weakest = min([CONF_RANK[e["conf"]] for e in s2.edits] or [3])
+        L.append("SIMULATION: after E1..E%d the file lexes BALANCED (weakest edit: %s)."
+                 % (len(s2.edits), [k for k, v in CONF_RANK.items() if v == weakest][0]))
+    else:
+        L.append("SIMULATION: still broken after the planned edits; remaining:")
+        for p in res["s3"].problems[:3]:
+            L.append("    " + surface_line(path, p, len(res["s3"].lines)))
+    L.append("")
+    qs = build_questions(res)
+    L.append("-- QUESTIONS FOR USER (paste verbatim, one message, then wait) --")
+    if not qs:
+        L.append("none")
+    for q in qs:
+        L.append("%s [%s] %s" % (q["id"], q["where"], q["ask"]))
+        for o in q["options"]:
+            L.append("      " + o + ("   <- default" if o.startswith(q["default"] + ":") else ""))
+    L.append("")
+    centers = []
+    p0 = probs[0]
+    if p0["kind"] == "unclosed":
+        centers.append(("unclosed opener", p0["opener"].line))
+        if p0["opener"].evidence:
+            centers.append(("evidence line", p0["opener"].evidence["line"]))
+    else:
+        centers.append(("first surface error", p0["line"]))
+        for e in s1.premature_ev:
+            if e["closer_off"] < p0["off"]:
+                centers.append(("premature-close candidate", e["closer_line"]))
+    seen = set()
+    L.append("-- CONTEXT (d = open-bracket depth at start of line) --")
+    for name, ln in centers[:4]:
+        if ln in seen:
+            continue
+        seen.add(ln)
+        L.append("[%s]" % name)
+        L.extend(ctx(s1, ln, radius))
+    if show_diff and s2.edits:
+        L.append("")
+        L.append("-- DIFF of simulated repair --")
+        L.extend(l.rstrip("\n") for l in difflib.unified_diff(
+            res["text"].split("\n"), res["repaired"].split("\n"),
+            "a/" + path, "b/" + path, lineterm="", n=2))
+    L.append("")
+    L.append(PROTOCOL.rstrip("\n"))
+    return L
+
+
+def odict(o: Opener) -> dict:
+    return dict(ch=o.ch, line=o.line, col=o.col, head=o.head, snippet=o.snippet)
+
+
+def pjson(p: dict) -> dict:
+    q = {k: v for k, v in p.items() if k not in ("opener", "skipped")}
+    if "opener" in p:
+        q["opener"] = odict(p["opener"])
+    if "skipped" in p:
+        q["skipped"] = [odict(o) for o in p["skipped"]]
+    return q
+
+
+def to_json(res: dict) -> dict:
+    s1, s2 = res["s1"], res["s2"]
+    return dict(
+        path=res["path"],
+        status="IMBALANCED" if s1.problems else "BALANCED",
+        decision=decision(res),
+        surface=[pjson(p) for p in s1.problems],
+        evidence=s1.dedent_ev + s1.premature_ev if s1.problems else [],
+        edits=[{k: v for k, v in e.items() if k != "ev"} for e in (s2.edits if s2 else [])],
+        verified=res["verified"],
+        questions=build_questions(res) if s2 else [],
+        long_strings=s1.long_strings,
+    )
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="rkt_parens",
+        description="Find where Racket brackets go wrong and where they started going wrong.",
+        epilog=PROTOCOL, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("files", nargs="+", help="Racket files; '-' reads stdin")
+    ap.add_argument("--json", action="store_true", help="structured output")
+    ap.add_argument("--brief", action="store_true", help="compiler-style lines only")
+    ap.add_argument("--diff", action="store_true", help="show unified diff of the simulated repair")
+    ap.add_argument("--context", type=int, default=3, help="context radius in lines (default 3)")
+    ap.add_argument("--max-problems", type=int, default=12)
+    a = ap.parse_args(argv)
+
+    results, rc = [], 0
+    for f in a.files:
+        try:
+            if f == "-":
+                text, label = sys.stdin.read(), "<stdin>"
+            else:
+                with open(f, encoding="utf-8", errors="replace", newline="") as fh:
+                    text, label = fh.read(), f
+        except OSError as exc:
+            print("%s: cannot read: %s" % (f, exc), file=sys.stderr)
+            return 2
+        res = analyze(label, text)
+        results.append(res)
+        if res["s1"].problems:
+            rc = max(rc, 1)
+
+    if a.json:
+        print(json.dumps([to_json(r) for r in results], indent=2, ensure_ascii=False))
+        return rc
+    for r in results:
+        if a.brief:
+            s1 = r["s1"]
+            if not s1.problems:
+                print("%s: BALANCED" % r["path"])
+            for p in s1.problems:
+                print(surface_line(r["path"], p, len(s1.lines)))
+        else:
+            print("\n".join(render(r, a.context, a.diff, a.max_problems)))
+            print()
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+#+end_src
+
+* Output sections (reference)
+
+| Section              | Purpose                                                                                  |
+|----------------------+------------------------------------------------------------------------------------------|
+| =STATUS= / =DECISION=    | =APPLY_PLAN= only when every planned edit is =strong= and re-lexes clean; otherwise =ASK_USER= |
+| =SURFACE= + =ORIGIN=     | one =S#= line per reader error, each followed by its likely origin                         |
+| =INDENTATION EVIDENCE= | every ~dedent~ / ~premature~ signal found, with the exact fix                                |
+| =REPAIR PLAN=          | =E#= edits with before/after line previews and a =SIMULATION= verdict                        |
+| =QUESTIONS FOR USER=   | lettered, pre-worded, with a marked default                                              |
+| =CONTEXT=              | source windows annotated with open-bracket depth =d=                                       |
+
+* Confidence semantics
+
+| Level  | Trigger                                                                                                 | Qwen action        |
+|--------+---------------------------------------------------------------------------------------------------------+--------------------|
+| strong | line at col 0 inside an open form; or indented line at top level right after a top-level form closed    | apply, then report |
+| medium | line at/left of an open form that began its own line; or ≥2 cols deeper than a just-closed leading form | ask first          |
+| weak   | line at/left of a mid-line form; or 1 col deeper than a just-closed form                                | ask, default leave |
+| low    | no indentation clue (mismatched kind, extra closer, EOF append)                                         | ask first          |
+
+* Illustrative output (hand-written; not produced by a run)
+
+#+begin_example
+=== rkt_parens: demo.rkt ===
+STATUS: IMBALANCED (9 lines, 1 surface error(s))
+DECISION: APPLY_PLAN (all edits strong and verified; tell the user afterwards)
+
+S1  demo.rkt:3:1: error: unclosed `( define` at 1:1 — EOF (line 9) reached while still inside it
+      ORIGIN: opened at 1:1 | (define (f x)
+      EVIDENCE: [strong] line 4 starts at col 0, at/left of 1 still-open form(s) (1:1); they probably
+      should have closed earlier → insert `)` at 2:9 (right after the last code token before line 4)
+#+end_example

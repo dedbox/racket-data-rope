@@ -123,6 +123,15 @@ Unicode is allowed in prose wherever prose lives: `.rkt` comments, `notes/*.org`
 character counts as one column, so the prose band and the 93-column cap (§Prose) measure `≤` the
 same way as `<=`.
 
+Names follow the reader's grammar, not the prose rules: any printing character the reader accepts
+inside an identifier is allowed in names this project defines, so a variable can mirror a comment
+placeholder (`ρ′`, `ρ′′`, `ρ₀`, `ρ*`, `τ:dict`). The reader's own limits still hold -- ASCII `"`,
+`,`, whitespace, and `{}[]()` end or reject a token, and a leading `#` is read syntax, so `#ρ` is
+not a name -- and unicode spaces such as U+200B and U+2009 sit inside a name rather than ending it.
+Bindings that Racket provides keep their own names: spell `map`, `string-ref`, and `syntax/parse`
+as Racket does, never with unicode characters. The one unicode spelling that stands for a Racket
+binding is `λ` for `lambda`.
+
 ## Design notes
 
 Design notes are `notes/*.org`; `racket-facts.md` stays at the root.
@@ -181,7 +190,7 @@ names the kind). The keys are a closed set; adding a key is a decision, not a ha
 ## Git commit messages
 
 Subject: first line, under 68 characters, imperative, lowercase. Then a blank line, then the body (no
-length limit; wrap ~72).
+length limit; wrap ~75).
 
 ### Merge-squash commits into `dev`
 
@@ -201,4 +210,4 @@ understands what changed.
 - Test results: a line for the latency gate or the suite is allowed only when the run happened before
   the merge, and it names the closest margin instead of asserting a vague pass.
 - Formatting: the rules above still hold, with `*` list items whose continuations indent two spaces
-  and no body line past 72 columns.
+  and no body line past 75 columns.

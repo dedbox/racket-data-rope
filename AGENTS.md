@@ -30,9 +30,10 @@ never runs it (`ADR-026`).
 ## Delimiter doctor
 
 `tools/delimiter_doctor.py` checks bracket balance in `.rkt` files; `tools/delimiter_doctor.org`
-is its spec, and `notes/delimiter_doctor-design.org` records how the findings in `reports/` were
-triaged into it. Run it on every `.rkt` file you edited, before compiling, and re-run after each
-repair. Read its operating protocol once per session, before the first run:
+is its spec, and `notes/adr-027.org` (`ADR-027`) records how the findings in `reports/` were
+triaged into it and which limits the tool states rather than hides. Run it on every `.rkt` file
+you edited, before compiling, and re-run after each repair. Read its operating protocol once per
+session, before the first run:
 
 ```sh
 python3 tools/delimiter_doctor.py --protocol          # the rules to follow while fixing

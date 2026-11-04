@@ -1,11 +1,12 @@
 #+title: milestone M1 -- the type layer and the standard-operation table
-#+date: 2026-11-03
+#+date: 2026-11-04
 #+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =notes/m0.org= §1.5, §3.2, §3.3; =notes/overview.org= §2.2-§2.3.
 
 ** 0. Status legend
 | Tag      | Meaning                                             |
 |----------+-----------------------------------------------------|
 | Accepted | carried over from an ADR in =notes/m0.org=            |
+| Settled  | you confirmed the answer in this pass               |
 | Proposed | recommended here; not yet reviewed                  |
 | ⟦verify⟧ | needs a spike or a measurement before it is trusted |
 
@@ -175,7 +176,8 @@ in M2 it drives result typing.
 - =#:dict-only= rows expose the chunk algebra itself for hand-written hot loops.
 - =#:fold= turns a binary core function into a variadic op (a left fold over the tail).
 - Structural operations stay plain functions as well (§2.5); the type-dependent first-class form is
-  =(rope-ref/τ string-rope)=, a row flag rather than hand-written code. ⟦verify⟧
+  =(rope-ref/τ string-rope)=, a row flag rather than hand-written code. M1 ships no such flag -- it
+  arrives with =define-rope-op= at M3, which is the only consumer (§13 row 2).
 - Slicing keeps Racket's convention, =slice chunk start end= (ADR-013).
 
 ** 7. One row, one macro (Proposed)
@@ -298,14 +300,17 @@ ADR-025 is signed off (2026-11-01), so =notes/m0.org= §3.2 row 12 pins both sha
 =bytes/2048/256= and =string/512/64= -- and each M1 type module has a ceiling to gate.
 
 ** 13. Open decisions
-| # | Question | Affects |
-|--+--------------------------------------------------------------+---------------|
-| 1 | Cursors were deferred to M1 by §3.3 Q17, but §1.5 does not list them. They are conveniences over the spine descent and pair naturally with =in-rope=, which is M3 -- record a decision rather than build them twice. | ADR-009, M1 scope |
-| 2 | Does a table row need a =#:as-procedure= flag for first-class ops (§2.5), or wait until someone asks? | ADR-006 |
-| 3 | Where does =rope->source-in= live: =dicts.rkt= or a helper in =ops.rkt=? Either way =dicts.rkt= must not keep a second dictionary per chunk representation. | ADR-018, invariant 8 |
-| 4 | A =#:width= procedure is evaluated at leaf construction today (=make-leaf=). What does inline mode do with it at M3 -- inline the call, or keep the cached leaf measure? | ADR-017, ADR-005 |
-| 5 | Is the compile-error harness (=racket -e= subprocess) acceptable, or should it drive =compiler/compile= directly? | §1.6 |
-| 6 | Does =α= in a signature (the fold's accumulator) need a real check, or stay unchecked until M2's inference exists? | ADR-003 |
-| 7 | Contract policy: does the typed layer check that start <= end and end <= length hold, or document preconditions and let the chunk primitives raise? =core.rkt= checks nothing today. | ADR-011, §1.6 |
-| 8 | Chunk ownership: a source at or below =limit= is stored verbatim, so a later mutation of a mutable source leaks into the rope. Copy on adopt, document immutability, or assert in the debug build? | ADR-002, ADR-011 |
-| 9 | Does M1 ship a token type (vector chunks of token structs, 128/16, §3.2 row 21) or stay with =string-rope= and =bytes-rope= until the pipeline type exists? | ADR-018, §3.3 Q21 |
+| # | Question | Decision | Affects |
+|--+--------+----------+---------|
+| 1 | Cursors were deferred to M1 by §3.3 Q17, but §1.5 does not list them. They are conveniences over the spine descent and pair naturally with =in-rope=, which is M3 -- record a decision rather than build them twice. | unsettled | ADR-009, M1 scope |
+| 2 | Does a table row need a =#:as-procedure= flag for first-class ops (§2.5), or wait until someone asks? | Settled: no flag in M1 -- =(rope-ref/τ string-rope)= needs a user-defined operation, and =define-rope-op= at M3 is the only consumer, so the grammar gains the slot with that step. | ADR-006 |
+| 3 | Where does =rope->source-in= live: =dicts.rkt= or a helper in =ops.rkt=? Either way =dicts.rkt= must not keep a second dictionary per chunk representation. | unsettled | ADR-018, invariant 8 |
+| 4 | A =#:width= procedure is evaluated at leaf construction today (=make-leaf=). What does inline mode do with it at M3 -- inline the call, or keep the cached leaf measure? | unsettled | ADR-017, ADR-005 |
+| 5 | Is the compile-error harness (=racket -e= subprocess) acceptable, or should it drive =compiler/compile= directly? | unsettled | §1.6 |
+| 6 | Does =α= in a signature (the fold's accumulator) need a real check, or stay unchecked until M2's inference exists? | Settled: unchecked in M1 -- a name before =->= binds an argument and a name after it documents a result, so =α= states that the fold returns the accumulator's type and nothing enforces it. M2's inference decides what it checks. | ADR-003 |
+| 7 | Contract policy: does the typed layer check that start <= end and end <= length hold, or document preconditions and let the chunk primitives raise? =core.rkt= checks nothing today. | unsettled | ADR-011, §1.6 |
+| 8 | Chunk ownership: a source at or below =limit= is stored verbatim, so a later mutation of a mutable source leaks into the rope. Copy on adopt, document immutability, or assert in the debug build? | unsettled | ADR-002, ADR-011 |
+| 9 | Does M1 ship a token type (vector chunks of token structs, 128/16, §3.2 row 21) or stay with =string-rope= and =bytes-rope= until the pipeline type exists? | unsettled | ADR-018, §3.3 Q21 |
+
+- Rows 2 and 6 are settled (2026-11-04), and both answers are what step 3's rows write: no
+  first-class flag, and a signature name that binds an argument without checking it.

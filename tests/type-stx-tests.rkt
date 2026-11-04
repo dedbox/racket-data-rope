@@ -1,6 +1,6 @@
 #lang racket/base
 
-;;; tests/private-type-tests.rkt -- unit tests for data/rope/private/type.rkt.
+;;; tests/type-stx-tests.rkt -- unit tests for data/rope/private/type-stx.rkt.
 ;;;
 ;;; This module is the compile-time half of the type layer: the record that names a rope
 ;;; type, the key list the accessor reads, and the resolver that turns an identifier into
@@ -23,9 +23,9 @@
   (require rackunit
            rackunit/text-ui
            (for-syntax racket/base
-                       data/rope/private/type
+                       data/rope/private/type-stx
                        syntax/parse)
-           data/rope/private/type
+           data/rope/private/type-stx
            syntax/parse/define)
 
   ;; =====================================================================
@@ -130,7 +130,7 @@
         ;; raise-syntax-error keeps the caller's syntax object, so the report names the
         ;; file and column of the call rather than the resolver's own body.
         (define result (resolve-result plain))
-        (check-regexp-match #rx"tests/private-type-tests\\.rkt:[0-9]+:[0-9]+: plain:"
+        (check-regexp-match #rx"tests/type-stx-tests\\.rkt:[0-9]+:[0-9]+: plain:"
                             (cadr result)))
       (test-case "a runtime call never reaches the module's own message"
         ;; syntax-local-value needs an expansion context, so the fallback procedure the

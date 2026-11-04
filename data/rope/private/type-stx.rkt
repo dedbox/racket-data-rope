@@ -1,6 +1,6 @@
 #lang racket/base
 
-;;; data/rope/private/type.rkt -- the compile-time record that names a rope type.
+;;; data/rope/private/type-stx.rkt -- the compile-time record that names a rope type.
 ;;;
 ;;; === What a rope-type is ===
 ;;;

@@ -25,9 +25,9 @@
   (require rackunit
            rackunit/text-ui
            (for-syntax racket/base
-                       data/rope/private/type)
+                       data/rope/private/type-stx)
            data/rope/core
-           data/rope/private/type
+           data/rope/private/type-stx
            data/rope/type
            syntax/parse/define)
 
@@ -68,10 +68,10 @@
   ;; a bad declaration written here would stop the whole test file from compiling.
   (define (snippet forms)
     `(module declared-type racket/base
-       (require (for-syntax racket/base syntax/parse data/rope/private/type)
+       (require (for-syntax racket/base syntax/parse data/rope/private/type-stx)
                 syntax/parse/define
                 data/rope/core
-                data/rope/private/type
+                data/rope/private/type-stx
                 data/rope/type)
        ,@forms))
 

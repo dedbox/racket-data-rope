@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require (for-syntax data/rope/private/stxclasses
-                     data/rope/private/type
+                     data/rope/private/type-stx
                      racket/base
                      racket/syntax
                      syntax/parse)

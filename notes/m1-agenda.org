@@ -1,6 +1,6 @@
 #+title: milestone M1 agenda -- the ordered build plan for the type layer
 #+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=, plus the checks that sign each step off.
-#+date: 2026-11-02
+#+date: 2026-11-03
 
 ** 0. Status legend
 | Tag         | Meaning                                                  |
@@ -238,11 +238,13 @@ The rule M1 writes into =data/rope/type.rkt=, quoted from =notes/m1.org= §5:
                          #:slice slice #:append app #:width width
                          #:limit limit #:merge-limit merge-limit))
     (define-syntax τ (rope-type 'τ #'τ:dict
-                         (list chunk? empty len ref slice app width limit merge-limit)))))
+                         (list empty len ref slice app width limit merge-limit chunk?)))))
 #+end_src
 
 - Check: a smoke case in =tests/type-tests.rkt= defines one type, reads all nine record
   keys, and confirms =(chunk-dict-limit τ:dict)= equals the declared =#:limit=.
+- Check: the record's primitive list ends with =chunk?=, matching =type-keys= order (§3),
+  so the eight dictionary slots keep indices 0 through 7 and never need shifting.
 - Check: expansion rejects =#:merge-limit= above =#:limit= and below 1. A compile-time
   error cannot be caught at runtime, so the assertion belongs to step 8's harness, not
   to a runtime =check-exn=.

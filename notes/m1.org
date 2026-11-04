@@ -1,5 +1,5 @@
 #+title: milestone M1 -- the type layer and the standard-operation table
-#+date: 2026-11-02
+#+date: 2026-11-03
 #+subtitle: scope = =define-rope-type=, the standard-op table, explicit type arguments, =string-rope= and =bytes-rope=. Sources = =notes/m0.org= §1.5, §3.2, §3.3; =notes/overview.org= §2.2-§2.3.
 
 ** 0. Status legend
@@ -130,13 +130,16 @@
                          #:slice slice #:append app #:width width
                          #:limit limit #:merge-limit merge-limit))
     (define-syntax τ (rope-type 'τ #'τ:dict
-                         (list chunk? empty len ref slice app width limit merge-limit)))))
+                         (list empty len ref slice app width limit merge-limit chunk?)))))
 #+end_src
 
 - One binding, two roles: =τ:dict= is the runtime dictionary, =τ= is a syntax binding carrying the
   index. Both are exported by =(provide (all-defined-out))=, so a type is renamed and imported by
   the module system like any name. Nominal identity is binding identity (§2.2), so the legacy
   =rope:string= naming convention is gone: =string-rope= coexists with =string=.
+- The record's nine primitives follow the =type-keys= order, =chunk?= last (§4), so the
+  eight dictionary fields keep indices 0 through 7, and slot 8 holds the predicate that
+  only exists at compile time -- an index needs no shifting between them.
 - =merge-limit <= limit= is a structural invariant (=rope-valid?=, =core.rkt:442=), so it is checked
   at expansion time, never at runtime.
 - A constant =#:width= is wrapped by =make-chunk-dict= (=core.rkt:100=). The record keeps the

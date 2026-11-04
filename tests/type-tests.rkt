@@ -13,7 +13,7 @@
 ;;; - a constant `#:width` becomes a procedure that scales by that constant
 ;;; - a `#:width` identifier is passed through unwrapped
 ;;; - an inline lambda is arity-checked against the position it fills
-;;; - `τ` resolves to nine values, in the order the declaration lists them
+;;; - `τ` resolves to nine values in `type-keys` order, with `chunk?` last
 ;;; - the record stores what the declaration evaluates, not the source syntax
 ;;; - the type name is a syntax binding, so it cannot be used as a value
 ;;; - two declarations produce distinct dictionaries and distinct records
@@ -241,13 +241,14 @@
         (check-equal? (cadr (record-of str-type)) 'str-type:dict)
         (check-equal? (car (record-of bytes-type)) 'bytes-type)
         (check-equal? (cadr (record-of bytes-type)) 'bytes-type:dict))
-      (test-case "the primitives are nine values in the declaration's order"
-        ;; Position 0 is #:chunk?, which the dictionary itself has no field for.
+      (test-case "the primitives fill the type-keys slots, chunk? last"
+        ;; Slot 8 is #:chunk?, the compile-time predicate the dictionary has no field
+        ;; for, and slots 0 through 7 line up with the eight dictionary fields.
         (check-equal? (caddr (record-of str-type))
-                      '(proc str proc proc proc proc num num num))
-        (check-equal? (length (caddr (record-of str-type))) 9)
+                      '(str proc proc proc proc num num num proc))
+        (check-equal? (length (caddr (record-of str-type))) (length type-keys))
         (check-equal? (caddr (record-of fn-type))
-                      '(proc str proc proc proc proc num num num)))
+                      '(str proc proc proc proc num num num proc)))
       (test-case "the record stores values, not the source syntax"
         ;; The record is built in the transformer phase, so each primitive is the value
         ;; the declaration evaluates there. A source form cannot be recovered from it.

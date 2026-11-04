@@ -98,7 +98,7 @@
         (check-equal? (length type-keys) 9))
       (test-case "the key list names the dictionary fields"
         ;; The keys name the dictionary fields, so each one matches what the declaration
-        ;; sets, and `chunk?` sits last while the record lists it first.
+        ;; sets, and `chunk?` sits last in the key list and in a record's primitives alike.
         ;; memq returns the tail that starts at the key, so the assertion is non-#f.
         (check-not-false (memq 'merge-limit type-keys))
         (check-false (memq 'merge-limit? type-keys))

@@ -29,5 +29,7 @@
     (define τ:dict (make-chunk-dict #:empty empty #:length len #:ref ref #:slice slice
                                     #:append app #:width width #:limit limit
                                     #:merge-limit merge-limit))
+    ;; Record `τ` with nine slots in `type-keys` order, `chunk?` last (notes/m1.org §4).
     (define-syntax τ
-      (rope-type 'τ #'τ:dict (list chunk? empty len ref slice app width limit merge-limit)))))
+      (rope-type 'τ #'τ:dict
+                 (list empty len ref slice app width limit merge-limit chunk?)))))

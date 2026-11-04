@@ -29,7 +29,9 @@ Setup builds `data/` only: every dev directory carries an `info.rkt` that omits 
 sources and the files about to run before every test or benchmark run: a stale `.zo`
 silently runs old code (`racket-facts.md` §5). Micro-benchmarks backing an architectural or design
 decision stay in `benchmarks/`. The latency gate is a benchmark, not a test: `raco test tests/`
-never runs it (`ADR-026`).
+never runs it (`ADR-026`). Do not run it while working: the harness and the LLM server
+hold the box (`racket-facts.md` §10), so the user runs it at milestone end or after a
+large and pervasive change.
 
 ## Delimiter doctor
 

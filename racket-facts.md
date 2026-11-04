@@ -89,7 +89,7 @@ rm -rf benchmarks/compiled && raco make …                            # when in
 The commands are listed in `AGENTS.md` §Commands. Behavior measured on this machine: the full test
 suite is ~114 tests and prints per-file summary lines; docs setup also writes man pages plus
 `data/rope/doc/`; coverage output lands in `coverage/`. The latency gate prints one line per cell and
-exits 1 on a breach; it needs a quiet box, where a run costs ~1 min per shape.
+exits 1 on a breach; it needs a quiet box (§10), where a run costs ~1 min per shape.
 
 ## 7. Shell gotchas observed
 
@@ -177,6 +177,13 @@ Project conventions are stated in `AGENTS.md` (§Code style, §Typography, §Ope
 The environment facts that motivated them and are not stated there: nothing outside the project
 directory is writable (`/` is not), so temp files go in `/tmp/opencode/`, and this model's output is
 quantized enough that nested grammar blocks need explicit `[` brackets.
+
+The agent harness and the LLM server hold most of this box's RAM and CPU, so gate numbers taken
+while an agent works read high: on 2026-11-03 the bytes shape came in at `602/1259` against the
+`535/1067` budget at 100 K typing with the harness live, and `630/1237` on an earlier run. A quiet
+box needs both turned off, which only the user can do, so the gate is the user's run at milestone
+end or after a large and pervasive change — an agent running it costs ~2 min per shape and is
+measuring the server, not the rope.
 
 ## 11. Running the oracle (dev branch) under the harness
 

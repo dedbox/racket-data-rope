@@ -252,13 +252,18 @@ names the kind). The keys are a closed set; adding a key is a decision, not a ha
 
 - Edit nothing outside the project directory (`/` is not writable); temporary files go in
   `/tmp/opencode/`. Ask before installing external libraries.
-- Never `git push`, `git rebase`, `git merge`, or delete existing branches.
+- Never let a git command change the repository without an explicit request in this turn:
+  `git commit`, `git push`, `git rebase`, `git merge`, and branch deletion all need that request.
+  Staging with `git add` needs no confirmation, and neither does reading with `git status`,
+  `git diff`, or `git log`; report what changed instead of committing it.
 - Answer concisely, code snippets over paragraphs. Consult `/usr/share/doc/racket/reference/` rather
   than guessing.
 - You run on a tightly quantized local model: use square brackets `[]` wherever Racket idiom expects
   them, so nested grammar blocks stay unambiguous.
 
 ## Git commit messages
+
+These rules apply to a commit the user asks for, and to drafting or reviewing a message.
 
 Subject: first line, under 68 characters, imperative, lowercase. Then a blank line, then the body (no
 length limit; wrap ~75).
